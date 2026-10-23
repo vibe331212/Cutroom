@@ -19,13 +19,21 @@ Or in a terminal, from this folder: `python3 server.py`, then open http://localh
 - Thumbnails, free with no account or key: Best quality (AI Horde, 1 to 4 minute line) or Fast (Pollinations). `server.py` fetches them for the page.
 - Photo editor (Photo button at the top): drop or take a photo, 17 filters (face squish, big head, mirrors, kaleidoscope, glitch, pop art and more), and hold Cmd+Shift to scribble pixel blur over anything. Hold Cmd+Option and click (or use Up/Down and Return) to mix up to 10 filters. Faces are found with Google MediaPipe, on this computer.
 - Video filters (Effects tab): the same 17 filters, on the piece under the playhead or a Return+drag selection. Cmd+Option click mixes up to 10. They show live, in exports, and as FX badges on the timeline.
+- Voice changer (Effects tab): Robot and 10 more voices on any part of a video.
+- Record more (timeline toolbar): add a new recording at the end or at the playhead.
 - Export to a 1080p WebM video or audio only, and captions as .srt.
+
+## Online
+The code is in the private GitHub repo `vibe331212/Cutroom`. Cloudflare Pages publishes it (no build command, output folder `/`).
+`functions/` holds the Cloudflare Functions that make free thumbnails on the website (the same job `server.py` does on your computer).
+Push to `main` and the website updates about a minute later.
 
 ## Files
 - `server.py`: runs the app and fetches free thumbnails.
 - `index.html`: the page layout and icons.
 - `styles.css`: all the styling. Light and dark looks follow the mode.
 - `js/photo.js`: the photo editor.
+- `js/voices.js`: the 11 voices for the voice changer.
 - `js/app.js`: the editor (timeline, playback, cutting, captions, recording, thumbnails, export).
 - `js/themes.js`: the 15 animated modes, copied from PetPost. If PetPost's modes change, copy the file again.
 
