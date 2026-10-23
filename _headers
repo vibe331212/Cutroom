@@ -1,0 +1,3 @@
+/*
+  Cache-Control: no-cache
+  Permissions-Policy: camera=(self), microphone=(self), display-capture=(self)
