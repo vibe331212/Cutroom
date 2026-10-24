@@ -43,6 +43,8 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.pollinations(q)
             if url.path.startswith('/api/horde/check/'):
                 return self.horde_check(url.path.rsplit('/', 1)[1])
+            if url.path == '/api/horde/image':
+                return self.horde_image((q.get('u') or [''])[0])
             if url.path.startswith('/api/horde/result/'):
                 return self.horde_result(url.path.rsplit('/', 1)[1], int((q.get('i') or ['0'])[0]))
         except urllib.error.HTTPError as err:
@@ -89,6 +91,14 @@ class Handler(SimpleHTTPRequestHandler):
         if g.get('censored'):
             return self.json(451, {'error': 'censored'})
         img, ctype = fetch(g['img'], timeout=60)
+        self.reply(200, ctype or 'image/webp', img)
+
+    def horde_image(self, u):
+        target = urllib.parse.urlparse(u)
+        host = target.hostname or ''
+        if target.scheme != 'https' or not re.search(r'(^|\.)(r2\.cloudflarestorage\.com|aihorde\.net)$', host):
+            return self.json(400, {'error': 'not allowed'})
+        img, ctype = fetch(u, timeout=60)
         self.reply(200, ctype or 'image/webp', img)
 
     def pollinations(self, q):

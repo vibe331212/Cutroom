@@ -1804,21 +1804,58 @@ async function makeThumbs(tiles, prompt, engine) {
 }
 
 // AI Horde: free community computers. One request makes all versions; we wait our turn in line.
-async function hordeThumbs(tiles, prompt) {
+// The browser asks AI Horde directly (it allows that, and it uses your own connection). If that
+// fails, our own server asks instead (server.py on your computer, functions/ on the website).
+const HORDE = 'https://aihorde.net/api/v2';
+const HORDE_HEADERS = { apikey: '0000000000', 'Client-Agent': 'Cutroom:1.0:web', 'Content-Type': 'application/json' };
+const HORDE_MODELS = ['Juggernaut XL', 'AlbedoBase XL 3.1', 'AlbedoBase XL (SDXL)'];  // family-safe only
+const HORDE_NEGATIVE = 'text, words, letters, watermark, logo, signature, blurry, deformed, ugly, extra fingers, nsfw, nude';
+
+async function hordeSubmit(prompt, n) {
+  const seed = String(Math.floor(Math.random() * 1e9));
+  try {
+    const res = await fetch(`${HORDE}/generate/async`, {
+      method: 'POST', headers: HORDE_HEADERS,
+      body: JSON.stringify({
+        prompt: `${prompt} ### ${HORDE_NEGATIVE}`,
+        params: { width: 1024, height: 576, steps: 25, cfg_scale: 6, sampler_name: 'k_euler_a', n, seed },
+        nsfw: false, censor_nsfw: true, models: HORDE_MODELS, r2: true, shared: false,
+      }),
+    });
+    const j = await res.json();
+    if (res.ok && j.id) return { id: j.id, direct: true };
+  } catch {}
   let res;
   try {
-    res = await fetch('/api/horde/submit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, n: tiles.length, seed: Math.floor(Math.random() * 1e9) }) });
+    res = await fetch('/api/horde/submit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, n, seed }) });
   } catch { throw new ThumbError(OLD_SERVER, 0); }
   if (res.status === 404 || res.status === 501) throw new ThumbError(OLD_SERVER, res.status);
   if (!res.ok) throw new ThumbError(`submit ${res.status}`, res.status);
   const { id } = await res.json();
   if (!id) throw new ThumbError('no job id', 502);
+  return { id, direct: false };
+}
+
+async function hordeImage(job, i) {
+  if (!job.direct) return blobURL(await fetch(`/api/horde/result/${job.id}?i=${i}`));
+  const st = await (await fetch(`${HORDE}/generate/status/${job.id}`, { headers: HORDE_HEADERS })).json();
+  const g = (st.generations || [])[i];
+  if (!g) throw new ThumbError('not ready', 404);
+  if (g.censored) throw new ThumbError('censored', 451);
+  // the picture lives on a storage server; fetch it directly, or through our server if that is blocked
+  try { return await blobURL(await fetch(g.img)); }
+  catch { return blobURL(await fetch(`/api/horde/image?u=${encodeURIComponent(g.img)}`)); }
+}
+
+async function hordeThumbs(tiles, prompt) {
+  const job = await hordeSubmit(prompt, tiles.length);
+  const checkURL = job.direct ? `${HORDE}/generate/check/${job.id}` : `/api/horde/check/${job.id}`;
   const t0 = Date.now();
   for (;;) {
     await sleep(4000);
     if (Date.now() - t0 > 12 * 60000) throw new ThumbError('took too long', 504);
     let c;
-    try { c = await (await fetch(`/api/horde/check/${id}`)).json(); } catch { continue; }
+    try { c = await (await fetch(checkURL, job.direct ? { headers: HORDE_HEADERS } : {})).json(); } catch { continue; }
     if (c.faulted || c.is_possible === false) throw new ThumbError('faulted', 502);
     if (c.done) break;
     const text = c.queue_position > 0
@@ -1827,7 +1864,7 @@ async function hordeThumbs(tiles, prompt) {
     tiles.forEach(t => tileLabel(t, text));
   }
   await Promise.all(tiles.map(async (tile, i) => {
-    try { showThumb(tile, await blobURL(await fetch(`/api/horde/result/${id}?i=${i}`)), prompt, 'best'); }
+    try { showThumb(tile, await hordeImage(job, i), prompt, 'best'); }
     catch (err) {
       showThumbError(tile, err.status === 451 ? 'The safety filter blocked this one. Try different words.' : 'This one did not come out. Try again.', prompt, 'best');
     }
