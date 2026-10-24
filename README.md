@@ -24,8 +24,9 @@ Or in a terminal, from this folder: `python3 server.py`, then open http://localh
 - Export to a 1080p WebM video or audio only, and captions as .srt.
 
 ## Online
+Live at **https://cutroom-app.pages.dev** (Cloudflare Pages project `cutroom-app`).
 The code is in the private GitHub repo `vibe331212/Cutroom`. Cloudflare Pages publishes it (no build command, output folder `/`).
-`functions/` holds the Cloudflare Functions that make free thumbnails on the website (the same job `server.py` does on your computer).
+`functions/` holds Cloudflare Functions for free thumbnails (the same job `server.py` does on your computer). AI Horde blocks Cloudflare's shared servers, so the page asks AI Horde directly and only uses the Functions as a backup.
 Push to `main` and the website updates about a minute later.
 
 ## Files
