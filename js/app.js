@@ -2,6 +2,7 @@
 import { THEMES, Scene, findTheme, renderPreview } from './themes.js?v=4';
 import { initPhoto, Photo, FILTERS, applyFilter, findFaces } from './photo.js?v=13';
 import { VOICES, makeVoice, voiceName } from './voices.js?v=3';
+import { initAccount, settingsChanged, syncSaveButton } from './account.js?v=1';
 
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -50,6 +51,7 @@ function loadSettings() {
 }
 function saveSettings() {
   try { localStorage.setItem('cutroom.settings', JSON.stringify({ theme: S.theme, framed: S.framed, captions: S.captions })); } catch {}
+  settingsChanged();  // when signed in, your settings follow you to other computers
 }
 
 // ---------- toast
@@ -272,11 +274,13 @@ async function addSource(file, opts = {}) {
     frames: [], peaks: null, audio: null, thumb: null,
     color: CLIP_COLORS[S.sources.size % CLIP_COLORS.length],
     busy: '',
+    key: opts.key || null,  // its file name when saved online
   };
   S.sources.set(src.id, src);
   wireSource(src);
   regroup(src);
-  if (opts.at != null && opts.at < total() - 0.02) insertClip(src, opts.at); else appendClip(src);
+  if (opts.noAppend) { /* opening a saved project puts the clips back itself */ }
+  else if (opts.at != null && opts.at < total() - 0.02) insertClip(src, opts.at); else appendClip(src);
   renderLibrary();
   analyze(src);
   return src;
@@ -2257,6 +2261,59 @@ function setView(v) {
   stopShuttle();
 }
 
+// ---------- saving online (see account.js)
+let savedVersion = 0;
+function projectSnapshot() {
+  const sources = [...S.sources.values()];
+  for (const src of sources) {
+    if (!src.key) {
+      const ext = (src.file.name.match(/\.[a-z0-9]{2,5}$/i) || ['.webm'])[0].toLowerCase();
+      src.key = `${crypto.randomUUID()}${ext}`;
+    }
+  }
+  const thumb = document.createElement('canvas');
+  thumb.width = 320; thumb.height = 180;
+  thumb.getContext('2d').drawImage(cv, 0, 0, 320, 180);
+  return {
+    name: $('#project-name').value.trim() || 'Untitled project',
+    thumb: thumb.toDataURL('image/jpeg', 0.7),
+    files: sources.map(src => ({ key: src.key, file: src.file })),
+    data: {
+      version: 1,
+      segments: S.segments,
+      captions: S.captions,
+      sources: sources.map(src => ({
+        id: src.id, key: src.key, name: src.name, fileName: src.file.name, type: src.file.type,
+        kind: src.kind, duration: src.duration, words: src.words.map(({ text, t0, t1 }) => ({ text, t0, t1 })),
+      })),
+    },
+  };
+}
+
+async function openSavedProject(row, files) {
+  pause();
+  for (const src of S.sources.values()) { src.el.pause(); src.el.remove(); }
+  S.sources.clear();
+  S.segments = [];
+  const ids = {};
+  for (const saved of row.data.sources || []) {
+    const file = files[saved.key];
+    if (!file) continue;
+    const src = await addSource(file, { name: saved.name, words: saved.words, kind: saved.kind === 'audio' ? 'audio' : undefined, duration: saved.duration, key: saved.key, noAppend: true });
+    ids[saved.id] = src.id;
+  }
+  S.segments = (row.data.segments || []).filter(g => ids[g.src]).map(g => ({ ...g, id: uid('g'), src: ids[g.src] }));
+  if (row.data.captions) { Object.assign(S.captions, row.data.captions); syncCaptionUI(); }
+  $('#project-name').value = row.name;
+  S.undo = []; S.redo = [];
+  S.playhead = 0;
+  setSelection(null);
+  setView('video');
+  afterEdit();
+  fitZoom();
+  renderLibrary();
+}
+
 function openRecord() {
   const has = S.segments.length > 0;
   $('#opt-where').hidden = !has;
@@ -2403,6 +2460,7 @@ function frame(now) {
   stepPlayback(dt);
   draw(dt);
   if (S.playhead !== lastPH || S.version !== lastVersion) {
+    if (S.version !== lastVersion) syncSaveButton();
     lastPH = S.playhead; lastVersion = S.version;
     $('#t-cur').textContent = fmt(S.playhead);
     highlightTranscript();
@@ -2423,6 +2481,21 @@ function loop(now) {
 // ---------- start
 loadSettings();
 initPhoto({ toast, openModal, closeModal });
+initAccount({
+  toast, openModal, closeModal,
+  getSettings: () => ({ theme: S.theme, framed: S.framed, captions: { ...S.captions } }),
+  applySettings: d => {
+    if (typeof d.framed === 'boolean') S.framed = d.framed;
+    if (d.captions) Object.assign(S.captions, d.captions);
+    if (d.theme) applyTheme(d.theme);
+    syncCaptionUI();
+  },
+  getProject: projectSnapshot,
+  openProject: openSavedProject,
+  isDirty: () => S.version !== savedVersion,
+  markSaved: () => { savedVersion = S.version; syncSaveButton(); },
+  hasClips: () => S.segments.length > 0,
+});
 buildFxPanel();
 buildModeGrid();
 wireUI();
