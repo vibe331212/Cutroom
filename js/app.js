@@ -1314,7 +1314,13 @@ self.onmessage = async (e) => {
 let asrWorker = null;
 let asrBusy = false;
 
+let asrQueue = Promise.resolve();
 function asrRun(audio, onMsg) {
+  const job = asrQueue.then(() => asrRunNow(audio, onMsg));
+  asrQueue = job.catch(() => {});
+  return job;
+}
+function asrRunNow(audio, onMsg) {
   if (!asrWorker) asrWorker = new Worker(URL.createObjectURL(new Blob([ASR_WORKER], { type: 'text/javascript' })), { type: 'module' });
   const id = uid('job');
   return new Promise((res, rej) => {
@@ -1357,14 +1363,15 @@ function wordsFromChunks(chunks, word) {
   return out;
 }
 
-async function autoCaption(list) {
+async function autoCaption(list, { quiet = false } = {}) {
   list = list.filter(Boolean);
   if (!list.length) { toast('Add a clip first'); return; }
-  if (asrBusy) { toast('Already making captions, hang on'); return; }
+  if (asrBusy && !quiet) { toast('Already making captions, hang on'); return; }
+  while (asrBusy) await sleep(500);
   asrBusy = true;
   const bar = $('#autocap-progress'), fill = bar.firstElementChild, status = $('#autocap-status');
   const btns = [$('#btn-autocap'), $('#btn-autocap2')];
-  setTab('captions');
+  if (!quiet) setTab('captions');
   bar.hidden = false; btns.forEach(b => { b.disabled = true; });
   status.textContent = 'Getting ready...';
   const files = {};
@@ -1406,7 +1413,7 @@ async function autoCaption(list) {
       syncCaptionUI();
       if (!S.playing) seekPreview();
       const name = $(`#cap-styles [data-style=${S.captions.style}] small`)?.textContent || '';
-      toast(`Captions are ready in your ${name} style. Press Space to watch.`, 3600);
+      toast(quiet ? 'Captions for your recording are ready' : `Captions are ready in your ${name} style. Press Space to watch.`, 3600);
     }
   } catch (err) {
     console.error(err);
@@ -1561,7 +1568,7 @@ async function beginRecording() {
   recorder.start(1000);
   rec.startedAt = performance.now();
   showHud();
-  if (REC.live && rec.hasMic) startLiveCaptions();
+
 }
 
 async function countdown(n) {
@@ -1582,7 +1589,7 @@ function showHud() {
   $('#rec-hud').hidden = false;
   $('#rec-hud').classList.remove('paused');
   $('#rec-pause').textContent = 'Pause';
-  $('#rec-cap').textContent = rec.hasMic ? (REC.live ? 'Listening...' : 'Recording') : 'Recording video only';
+  $('#rec-cap').textContent = rec.hasMic ? (REC.live ? 'Recording. Pause to catch up captions.' : 'Recording') : 'Recording video only';
   hudTimer = setInterval(() => { $('#rec-time').textContent = fmt(recElapsed(), false); }, 250);
 }
 function hideHud() {
@@ -1596,9 +1603,11 @@ function togglePauseRecording() {
   if (r.state === 'recording') {
     r.pause(); rec.pausedAt = performance.now();
     $('#rec-hud').classList.add('paused'); $('#rec-pause').textContent = 'Resume';
+    catchUpCaptions(rec);
   } else if (r.state === 'paused') {
     rec.pausedAcc += performance.now() - rec.pausedAt; rec.pausedAt = 0; r.resume();
     $('#rec-hud').classList.remove('paused'); $('#rec-pause').textContent = 'Pause';
+    $('#rec-cap').textContent = 'Recording';
   }
 }
 
@@ -1606,7 +1615,6 @@ function stopRecording() {
   if (!rec || rec.stopping) return;
   rec.stopping = true;
   rec.duration = recElapsed();
-  stopLiveCaptions();
   $('#countdown').hidden = true;
   if (rec.recorder.state !== 'inactive') rec.recorder.stop();
   else finishRecording();
@@ -1628,9 +1636,13 @@ async function finishRecording() {
   try {
     const at = r.insertAt;
     if (at == null) S.playhead = total();
-    await addSource(file, { kind: r.mode === 'audio' ? 'audio' : undefined, words: r.words, duration: r.duration, name: `Recording ${n}`, at });
+    const src = await addSource(file, { kind: r.mode === 'audio' ? 'audio' : undefined, words: r.words, duration: r.duration, name: `Recording ${n}`, at });
     if (at == null) S.playhead = Math.max(0, total() - r.duration);
-    toast(at != null ? 'Recording added at the playhead' : S.segments.length > 1 ? 'Recording added to the end of your video' : (r.words.length ? 'Recording added with live captions' : 'Recording added to your timeline'));
+    const where = at != null ? 'at the playhead' : S.segments.length > 1 ? 'to the end of your video' : 'to your timeline';
+    if (REC.live && r.hasMic) {
+      toast(`Recording added ${where}. Captions are finishing in the background, you can edit now.`, 3600);
+      autoCaption([src], { quiet: true });
+    } else toast(`Recording added ${where}`);
   } catch (err) {
     console.error(err);
     download(blob, `Recording ${n}.${ext}`);
@@ -1638,51 +1650,31 @@ async function finishRecording() {
   }
 }
 
-// Live captions while you record use the browser's speech recognition (Chrome, Edge, Safari).
-function startLiveCaptions() {
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SR) { $('#rec-cap').textContent = 'Recording (use Auto-caption afterwards)'; return; }
-  const r = rec;
-  let session = 0, lastFinal = '';
-  const starts = new Map();
-  const sr = new SR();
-  sr.continuous = true; sr.interimResults = true; sr.lang = navigator.language || 'en-US';
-  sr.onresult = e => {
-    if (!rec || rec !== r || r.pausedAt) return;
-    let interim = '';
-    for (let i = e.resultIndex; i < e.results.length; i++) {
-      const res = e.results[i], key = `${session}:${i}`;
-      if (!starts.has(key)) starts.set(key, Math.max(0, recElapsed() - 0.6));
-      if (res.isFinal) {
-        pushWords(r, res[0].transcript, starts.get(key), recElapsed());
-        lastFinal = res[0].transcript.trim();
-        starts.delete(key);
-      } else interim += res[0].transcript;
-    }
-    $('#rec-cap').textContent = (interim || lastFinal || 'Listening...').trim();
-  };
-  sr.onerror = e => {
-    if (e.error === 'not-allowed' || e.error === 'service-not-allowed') { r.sr = null; $('#rec-cap').textContent = 'Recording (live captions unavailable, use Auto-caption after)'; }
-  };
-  sr.onend = () => {
-    if (rec === r && r.sr === sr && !r.stopping) { session++; starts.clear(); try { sr.start(); } catch {} }
-  };
-  r.sr = sr;
-  try { sr.start(); } catch {}
+// Captions for recordings are made in the background, so recording never waits on them:
+// pausing catches up on what you said so far, and stopping finishes the whole clip.
+async function captionsFromBlob(blob) {
+  const ab = await new OfflineAudioContext(1, 1, 44100).decodeAudioData(await blob.arrayBuffer());
+  const res = await asrRun(await to16k(ab), () => {});
+  return wordsFromChunks(res.chunks, res.word);
 }
-function stopLiveCaptions() {
-  if (!rec?.sr) return;
-  const sr = rec.sr;
-  rec.sr = null;
-  try { sr.stop(); } catch {}
-}
-function pushWords(r, text, t0, t1) {
-  const parts = text.trim().split(/\s+/).filter(Boolean);
-  if (!parts.length) return;
-  t1 = Math.max(t1 - 0.2, t0 + parts.length * 0.14);
-  const weights = parts.map(p => p.length + 2), sum = weights.reduce((a, b) => a + b, 0);
-  let t = t0;
-  parts.forEach((p, i) => { const d = (t1 - t0) * weights[i] / sum; r.words.push({ text: p, t0: t, t1: t + d * 0.92 }); t += d; });
+function catchUpCaptions(r) {
+  if (!REC.live || !r.hasMic || !r.chunks.length || r.catching) return;
+  r.catching = true;
+  $('#rec-cap').textContent = 'Catching up captions...';
+  r.recorder.requestData();  // get everything recorded up to this moment
+  setTimeout(async () => {
+    try {
+      const words = await captionsFromBlob(new Blob(r.chunks, { type: r.recorder.mimeType }));
+      r.words = words;
+      if (rec === r && r.pausedAt) {
+        const last = words.slice(-6).map(w => w.text).join(' ');
+        $('#rec-cap').textContent = last ? `Caught up: ${last}` : 'Caught up (no words yet)';
+      }
+    } catch (err) {
+      console.warn('catch up captions', err);
+      if (rec === r && r.pausedAt) $('#rec-cap').textContent = 'Paused (captions will finish after you stop)';
+    } finally { r.catching = false; }
+  }, 150);
 }
 
 // ---------- export
@@ -2560,4 +2552,4 @@ resizeTL();
 requestAnimationFrame(loop);
 
 // handy for debugging in the console
-window.cutroom = { S, importFiles, addSource, deleteRange, seek, play, pause };
+window.cutroom = { S, importFiles, addSource, deleteRange, seek, play, pause, autoCaption, captionsFromBlob };
