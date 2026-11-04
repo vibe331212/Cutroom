@@ -1,4 +1,5 @@
 // Photo editor: drop in or take a photo, pick a filter, and scribble blur over anything.
+import { TextLayer, newText } from './text.js?v=1';
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -11,6 +12,7 @@ const P = {
   faces: [],             // face boxes found in the photo, in photo pixels
   facesFound: false,
   filters: [],          // filters mixed together, applied in order (empty = original)
+  texts: [],            // text on the photo
   amount: 0.7,
   adjust: { b: 0, c: 0, s: 0 },
   blurStrength: 60,
@@ -383,6 +385,7 @@ function compose(original = false) {
   lg.drawImage(mask, 0, 0);
   lg.globalCompositeOperation = 'source-over';
   vctx.drawImage(layer, 0, 0);
+  textLayer?.draw(vctx, view.width, view.height);
 }
 function busy(on, text) {
   $('#ph-busy').hidden = !on;
@@ -391,7 +394,7 @@ function busy(on, text) {
 
 // ---------- history (undo / redo)
 function snap() {
-  return { mask: mask ? copyCanvas(mask) : null, filters: [...P.filters], amount: P.amount, adjust: { ...P.adjust } };
+  return { mask: mask ? copyCanvas(mask) : null, filters: [...P.filters], amount: P.amount, adjust: { ...P.adjust }, texts: JSON.parse(JSON.stringify(P.texts)) };
 }
 function pushHistory() {
   if (!P.base) return;
@@ -403,6 +406,8 @@ function pushHistory() {
 function restore(st) {
   const same = st.filters.join() === P.filters.join() && st.amount === P.amount && JSON.stringify(st.adjust) === JSON.stringify(P.adjust);
   P.filters = [...st.filters]; P.amount = st.amount; P.adjust = { ...st.adjust };
+  P.texts = st.texts || [];
+  textLayer?.syncPanel(); textLayer?.syncOverlay();
   const m = mask.getContext('2d');
   m.globalCompositeOperation = 'copy';
   m.drawImage(st.mask, 0, 0);
@@ -444,6 +449,8 @@ async function setPhoto(source, name) {
   P.name = name;
   P.faces = []; P.facesFound = false;
   P.filters = [];
+  P.texts = [];
+  textLayer?.select(null);
   P.adjust = { b: 0, c: 0, s: 0 };
   mask = makeCanvas(P.base.width, P.base.height);
   layer = makeCanvas(P.base.width, P.base.height);
@@ -723,6 +730,8 @@ let openModal = id => { $(`#${id}`).hidden = false; };
 let closeModal = id => { $(`#${id}`).hidden = true; };
 export const isActive = () => document.body.classList.contains('photo-mode');
 
+let textLayer = null;
+
 export function initPhoto(api) {
   toast = api.toast || toast;
   openModal = api.openModal || openModal;
@@ -774,7 +783,7 @@ export function initPhoto(api) {
   $('#ph-reset').onclick = () => {
     if (!P.base) return;
     pushHistory();
-    P.filters = []; P.amount = 0.7; P.adjust = { b: 0, c: 0, s: 0 };
+    P.filters = []; P.texts = []; textLayer?.select(null); P.amount = 0.7; P.adjust = { b: 0, c: 0, s: 0 };
     mask.getContext('2d').clearRect(0, 0, mask.width, mask.height);
     syncUI(); scheduleRebuild();
   };
@@ -838,6 +847,31 @@ export function initPhoto(api) {
 
   new ResizeObserver(sizeView).observe(wrap);
   syncUI();
+
+  textLayer = new TextLayer({
+    panel: $('#ph-text-panel'), canvas: view, wrap,
+    items: () => P.texts,
+    add: () => {
+      if (!P.base) { toast('Open or take a photo first'); throw new Error('no photo'); }
+      pushHistory();
+      const it = newText();
+      P.texts.push(it);
+      return it;
+    },
+    remove: id => { P.texts = P.texts.filter(t => t.id !== id); },
+    changed: () => compose(),
+    before: pushHistory,
+  });
+  textLayer.isBusy = () => P.brushOn;
+  $('#ph-switch').addEventListener('click', e => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    const text = b.dataset.sec === 'text';
+    $$('#ph-switch button').forEach(x => x.classList.toggle('active', x === b));
+    $('#ph-text-panel').hidden = !text;
+    $('#ph-filters-sec').hidden = text;
+    textLayer.syncPanel();
+  });
 }
 
 export const Photo = { open, isActive, openExport };

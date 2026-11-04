@@ -7,8 +7,8 @@
 <link rel="icon" type="image/svg+xml" href="logo.svg?v=1">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=16">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Anton&family=Bangers&family=Bebas+Neue&family=Caveat:wght@700&family=Lobster&family=Pacifico&family=Permanent+Marker&family=Playfair+Display:wght@800&family=Press+Start+2P&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css?v=18">
 </head>
 <body data-tone="light">
 <canvas id="scene" class="scene-bg"></canvas>
@@ -38,6 +38,7 @@
     <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v7.5a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></symbol>
     <symbol id="i-logout" viewBox="0 0 24 24"><path d="M14 4.5h3.5a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H14M10 16l-4-4 4-4M6 12h9" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
     <symbol id="i-google" viewBox="0 0 24 24"><path d="M21.6 12.23c0-.68-.06-1.33-.17-1.96H12v3.7h5.38a4.6 4.6 0 0 1-2 3.02v2.5h3.24c1.9-1.75 2.98-4.33 2.98-7.26z" fill="#4285F4"/><path d="M12 22c2.7 0 4.96-.9 6.62-2.43l-3.24-2.5c-.9.6-2.04.96-3.38.96-2.6 0-4.8-1.76-5.6-4.12H3.06v2.6A10 10 0 0 0 12 22z" fill="#34A853"/><path d="M6.4 13.9a6 6 0 0 1 0-3.8V7.5H3.06a10 10 0 0 0 0 9z" fill="#FBBC05"/><path d="M12 5.98c1.47 0 2.79.5 3.83 1.5l2.87-2.87A9.6 9.6 0 0 0 12 2a10 10 0 0 0-8.94 5.5L6.4 10.1C7.2 7.74 9.4 5.98 12 5.98z" fill="#EA4335"/></symbol>
+    <symbol id="i-type" viewBox="0 0 24 24"><path d="M5 6.5V5h14v1.5M12 5v14M9 19h6" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></symbol>
     <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
     <symbol id="i-cc" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="3" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M10.5 10.2a2.3 2.3 0 1 0 0 3.6M17 10.2a2.3 2.3 0 1 0 0 3.6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
     <symbol id="i-text" viewBox="0 0 24 24"><path d="M4 6h16M4 12h10M4 18h13" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></symbol>
@@ -128,6 +129,7 @@
     <nav class="tabs" id="tabs">
       <button class="tab active" data-tab="transcript"><svg class="i"><use href="#i-text"/></svg>Script</button>
       <button class="tab" data-tab="captions"><svg class="i"><use href="#i-cc"/></svg>Captions</button>
+      <button class="tab" data-tab="text"><svg class="i"><use href="#i-type"/></svg>Text</button>
       <button class="tab" data-tab="effects"><svg class="i"><use href="#i-wand"/></svg>Effects</button>
       <button class="tab" data-tab="modes"><svg class="i"><use href="#i-layers"/></svg>Modes</button>
       <button class="tab" data-tab="thumbnail"><svg class="i"><use href="#i-image"/></svg>Thumbnail</button>
@@ -176,6 +178,8 @@
       </div>
       <button id="btn-srt" class="ghost-btn full"><svg class="i"><use href="#i-download"/></svg>Download captions (.srt)</button>
     </section>
+
+    <section class="tab-panel" data-panel="text"><div id="text-panel" class="text-panel"></div></section>
 
     <section class="tab-panel" data-panel="effects">
       <div class="h">Voice changer</div>
@@ -313,6 +317,9 @@
 
     <aside class="panel ph-right">
       <div class="ph-scroll">
+        <div class="seg ph-switch" id="ph-switch"><button data-sec="filters" class="active">Filters and blur</button><button data-sec="text">Text</button></div>
+        <div id="ph-text-panel" class="text-panel" hidden></div>
+        <div class="ph-filters-sec" id="ph-filters-sec">
         <div class="row-between"><div class="h">Filters</div><span class="face-status" id="face-status"></span></div>
         <div class="sub">Hold <kbd>Cmd</kbd> <kbd>Option</kbd> and click to mix up to 10 filters.</div>
         <div class="mix-hint" id="mix-hint" hidden>Mixing: click filters to add or remove them. <kbd>Up</kbd> <kbd>Down</kbd> to move, <kbd>Return</kbd> to add.</div>
@@ -329,6 +336,7 @@
         <div class="adj"><div class="adj-row"><span>Brush size</span><span id="brush-val">7%</span></div><input type="range" id="ph-brush-size" min="0.02" max="0.25" step="0.005" value="0.07"></div>
         <div class="adj"><div class="adj-row"><span>Pixel size</span><span id="blur-val">60%</span></div><input type="range" id="ph-blur" min="0" max="100" step="1" value="60"></div>
         <button class="ghost-btn full" id="ph-clear-blur"><svg class="i"><use href="#i-trash"/></svg>Remove all blur</button>
+        </div>
       </div>
     </aside>
   </section>
@@ -548,6 +556,6 @@
 <div class="toast" id="toast"></div>
 <div class="media-pool" id="media-pool"></div>
 
-<script type="module" src="js/app.js?v=18"></script>
+<script type="module" src="js/app.js?v=20"></script>
 </body>
 </html>

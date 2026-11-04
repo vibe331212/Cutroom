@@ -1,8 +1,9 @@
 // Cutroom: a browser video editor. Plain JavaScript modules, no build step.
 import { THEMES, Scene, findTheme, renderPreview } from './themes.js?v=4';
-import { initPhoto, Photo, FILTERS, applyFilter, findFaces } from './photo.js?v=13';
+import { initPhoto, Photo, FILTERS, applyFilter, findFaces } from './photo.js?v=14';
 import { VOICES, makeVoice, voiceName } from './voices.js?v=3';
 import { initAccount, settingsChanged, syncSaveButton } from './account.js?v=1';
+import { TextLayer, newText } from './text.js?v=1';
 
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -27,6 +28,7 @@ const W = 1920, H = 1080;
 const S = {
   sources: new Map(),      // id -> source (one imported or recorded file)
   segments: [],            // the edit: ordered pieces of sources {id, src, start, end}
+  texts: [],               // text on the video: {id, text, x, y, size, color, font, rot, style, a, b}
   undo: [], redo: [],
   playhead: 0,
   playing: false,
@@ -393,25 +395,29 @@ function locate(t) {
   return null;
 }
 
+const editState = () => JSON.stringify({ g: S.segments, t: S.texts });
 function snapshot() {
-  S.undo.push(JSON.stringify(S.segments));
+  S.undo.push(editState());
   if (S.undo.length > 200) S.undo.shift();
   S.redo = [];
 }
 function restore(json) {
-  S.segments = JSON.parse(json).filter(s => S.sources.has(s.src));
+  const d = JSON.parse(json);
+  S.segments = (Array.isArray(d) ? d : d.g).filter(s => S.sources.has(s.src));
+  if (!Array.isArray(d)) S.texts = d.t || [];
+  textLayer?.syncPanel();
   setSelection(null);
   afterEdit();
 }
 function undo() {
   if (!S.undo.length) return;
-  S.redo.push(JSON.stringify(S.segments));
+  S.redo.push(editState());
   restore(S.undo.pop());
   toast('Undone', 1200);
 }
 function redo() {
   if (!S.redo.length) return;
-  S.undo.push(JSON.stringify(S.segments));
+  S.undo.push(editState());
   restore(S.redo.pop());
   toast('Redone', 1200);
 }
@@ -669,6 +675,7 @@ function draw(dt) {
     drawAudioCard(src, L.srcT, area, framed);
   }
   if (S.captions.on) drawCaptions(L, src, capArea);
+  textLayer?.draw(cx, W, H);
 }
 
 function drawAudioCard(src, t, area, framed) {
@@ -1005,6 +1012,14 @@ function drawTimeline() {
       tx.restore();
     }
   });
+
+  // text bars (purple) along the top of the captions row
+  for (const t of S.texts) {
+    const xa = tX(t.a), xb = tX(Math.min(t.b, T));
+    if (xb < GUTTER || xa > Wd || xb - xa < 1) continue;
+    tx.fillStyle = t.id === textLayer?.selected ? '#7c3aed' : 'rgba(124,58,237,0.55)';
+    rr(tx, xa, cy - 1, xb - xa, 5, 2.5); tx.fill();
+  }
 
   // cut markers between clips
   acc = 0;
@@ -2261,6 +2276,36 @@ function setView(v) {
   stopShuttle();
 }
 
+// ---------- text on the video
+let textLayer = null;
+function setupText() {
+  textLayer = new TextLayer({
+    panel: $('#text-panel'), canvas: cv, wrap: $('#canvas-wrap'), video: true,
+    // a text shows from a to b on the timeline
+    items: all => all ? S.texts : S.texts.filter(t => S.playhead >= t.a - 0.001 && S.playhead < t.b),
+    add: () => {
+      if (!S.segments.length) { toast('Add a video first, then put text on it'); throw new Error('no video'); }
+      snapshot();
+      const sel = selRange();
+      const a = sel ? sel[0] : S.playhead, b = sel ? sel[1] : Math.min(total(), S.playhead + 3);
+      const it = newText({ a, b: b - a < 0.3 ? Math.min(total(), a + 3) : b });
+      S.texts.push(it);
+      S.version++;
+      tlDirty = true;
+      return it;
+    },
+    remove: id => { S.texts = S.texts.filter(t => t.id !== id); },
+    changed: () => { S.version++; tlDirty = true; },
+    before: snapshot,
+    timing: {
+      start: it => { it.a = S.playhead; if (it.b <= it.a + 0.1) it.b = Math.min(total(), it.a + 3); },
+      end: it => { it.b = Math.max(it.a + 0.1, S.playhead); },
+      whole: it => { it.a = 0; it.b = Math.max(total(), 0.1); },
+      text: it => `${fmt(it.a)} to ${fmt(it.b)}`,
+    },
+  });
+}
+
 // ---------- saving online (see account.js)
 let savedVersion = 0;
 function projectSnapshot() {
@@ -2282,6 +2327,7 @@ function projectSnapshot() {
       version: 1,
       segments: S.segments,
       captions: S.captions,
+      texts: S.texts,
       sources: sources.map(src => ({
         id: src.id, key: src.key, name: src.name, fileName: src.file.name, type: src.file.type,
         kind: src.kind, duration: src.duration, words: src.words.map(({ text, t0, t1 }) => ({ text, t0, t1 })),
@@ -2304,6 +2350,8 @@ async function openSavedProject(row, files) {
   }
   S.segments = (row.data.segments || []).filter(g => ids[g.src]).map(g => ({ ...g, id: uid('g'), src: ids[g.src] }));
   if (row.data.captions) { Object.assign(S.captions, row.data.captions); syncCaptionUI(); }
+  S.texts = row.data.texts || [];
+  textLayer?.select(null);
   $('#project-name').value = row.name;
   S.undo = []; S.redo = [];
   S.playhead = 0;
@@ -2461,6 +2509,7 @@ function frame(now) {
   draw(dt);
   if (S.playhead !== lastPH || S.version !== lastVersion) {
     if (S.version !== lastVersion) syncSaveButton();
+    textLayer?.syncOverlay();
     lastPH = S.playhead; lastVersion = S.version;
     $('#t-cur').textContent = fmt(S.playhead);
     highlightTranscript();
@@ -2481,6 +2530,7 @@ function loop(now) {
 // ---------- start
 loadSettings();
 initPhoto({ toast, openModal, closeModal });
+setupText();
 initAccount({
   toast, openModal, closeModal,
   getSettings: () => ({ theme: S.theme, framed: S.framed, captions: { ...S.captions } }),
