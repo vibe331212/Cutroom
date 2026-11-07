@@ -1,6 +1,6 @@
 // Cutroom: a browser video editor. Plain JavaScript modules, no build step.
 import { THEMES, Scene, findTheme, renderPreview } from './themes.js?v=4';
-import { initPhoto, Photo, FILTERS, applyFilter, findFaces } from './photo.js?v=16';
+import { initPhoto, Photo, FILTERS, applyFilter, findFaces } from './photo.js?v=17';
 import { VOICES, makeVoice, voiceName } from './voices.js?v=3';
 import { initAccount, settingsChanged, syncSaveButton } from './account.js?v=1';
 import { TextLayer, newText } from './text.js?v=1';
@@ -1861,7 +1861,16 @@ function makeTile(grid) {
       <button data-a="dl" disabled><svg class="i"><use href="#i-download"/></svg>Download</button>
       <button data-a="open" disabled><svg class="i"><use href="#i-external"/></svg>Open</button>
       <button data-a="again" disabled><svg class="i"><use href="#i-refresh"/></svg>New version</button>
-    </div>`;
+    </div>
+    <div class="thumb-actions second">
+      <button data-a="edit" disabled title="Open in the photo editor to add text, filters and more"><svg class="i"><use href="#i-image"/></svg>Edit</button>
+      <button data-a="change" disabled title="Describe what to add and AI changes the picture"><svg class="i"><use href="#i-wand"/></svg>Change with AI</button>
+      <button data-a="undo" disabled hidden><svg class="i"><use href="#i-undo"/></svg>Undo change</button>
+    </div>
+    <form class="thumb-change" hidden>
+      <input placeholder="What to add or change? Like: add a dragon in the sky" maxlength="200">
+      <button class="primary-btn" type="submit"><svg class="i"><use href="#i-wand"/></svg>Change</button>
+    </form>`;
   grid.prepend(tile);
   return tile;
 }
@@ -1905,20 +1914,25 @@ const HORDE_HEADERS = { apikey: '0000000000', 'Client-Agent': 'Cutroom:1.0:web',
 const HORDE_MODELS = ['Juggernaut XL', 'AlbedoBase XL 3.1', 'AlbedoBase XL (SDXL)'];  // family-safe only
 const HORDE_NEGATIVE = 'text, words, letters, watermark, logo, signature, blurry, deformed, ugly, extra fingers, nsfw, nude';
 
-async function hordeSubmit(prompt, n) {
+async function hordeSubmit(prompt, n, source = null) {
   const seed = String(Math.floor(Math.random() * 1e9));
   try {
-    const res = await fetch(`${HORDE}/generate/async`, {
-      method: 'POST', headers: HORDE_HEADERS,
-      body: JSON.stringify({
-        prompt: `${prompt} ### ${HORDE_NEGATIVE}`,
-        params: { width: 1024, height: 576, steps: 25, cfg_scale: 6, sampler_name: 'k_euler_a', n, seed },
-        nsfw: false, censor_nsfw: true, models: HORDE_MODELS, r2: true, shared: false,
-      }),
-    });
+    const job = {
+      prompt: `${prompt} ### ${HORDE_NEGATIVE}`,
+      params: { width: 1024, height: 576, steps: 25, cfg_scale: 6, sampler_name: 'k_euler_a', n, seed },
+      nsfw: false, censor_nsfw: true, models: HORDE_MODELS, r2: true, shared: false,
+    };
+    if (source) {
+      // start from an existing picture and only change it this much (0 = same, 1 = brand new)
+      job.source_image = source;
+      job.source_processing = 'img2img';
+      job.params.denoising_strength = 0.6;
+    }
+    const res = await fetch(`${HORDE}/generate/async`, { method: 'POST', headers: HORDE_HEADERS, body: JSON.stringify(job) });
     const j = await res.json();
     if (res.ok && j.id) return { id: j.id, direct: true };
   } catch {}
+  if (source) throw new ThumbError('busy', 503);  // only the direct way can change a picture
   let res;
   try {
     res = await fetch('/api/horde/submit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, n, seed }) });
@@ -1939,6 +1953,23 @@ async function hordeImage(job, i) {
   // the picture lives on a storage server; fetch it directly, or through our server if that is blocked
   try { return await blobURL(await fetch(g.img)); }
   catch { return blobURL(await fetch(`/api/horde/image?u=${encodeURIComponent(g.img)}`)); }
+}
+
+// Wait in AI Horde's line, telling you where you are.
+async function hordeWait(job, onText) {
+  const checkURL = job.direct ? `${HORDE}/generate/check/${job.id}` : `/api/horde/check/${job.id}`;
+  const t0 = Date.now();
+  for (;;) {
+    await sleep(4000);
+    if (Date.now() - t0 > 12 * 60000) throw new ThumbError('took too long', 504);
+    let c;
+    try { c = await (await fetch(checkURL, job.direct ? { headers: HORDE_HEADERS } : {})).json(); } catch { continue; }
+    if (c.faulted || c.is_possible === false) throw new ThumbError('faulted', 502);
+    if (c.done) return;
+    onText(c.queue_position > 0
+      ? `In line: ${c.queue_position} ahead of you, ${waitText(c.wait_time || 60)}`
+      : c.processing ? 'Painting your thumbnail now...' : `Almost there, ${waitText(c.wait_time || 20)}`);
+  }
 }
 
 async function hordeThumbs(tiles, prompt) {
@@ -1983,7 +2014,7 @@ async function fastThumb(tile, prompt, attempt = 0) {
   }
 }
 
-function showThumb(tile, url, prompt, engine) {
+function showThumb(tile, url, prompt, engine, keepOld = false) {
   const media = tile.querySelector('.thumb-media');
   const img = new Image();
   img.alt = 'Generated thumbnail';
@@ -1991,13 +2022,77 @@ function showThumb(tile, url, prompt, engine) {
   media.querySelector('.shimmer')?.remove();
   media.querySelector('.thumb-state')?.remove();
   const old = media.querySelector('img');
-  if (old) { URL.revokeObjectURL(old.src); old.remove(); }
+  if (old) {
+    if (keepOld) (tile._history ||= []).push({ url: old.src, prompt: tile._prompt });
+    else URL.revokeObjectURL(old.src);
+    old.remove();
+  }
+  if (!keepOld && tile._history) { tile._history.forEach(h => URL.revokeObjectURL(h.url)); tile._history = []; }
   media.prepend(img);
   tile._img = img;
+  tile._prompt = prompt;
   tile.querySelectorAll('button').forEach(b => { b.disabled = false; });
+  const undo = tile.querySelector('[data-a=undo]');
+  undo.hidden = !tile._history?.length;
   tile.querySelector('[data-a=dl]').onclick = () => downloadThumb(tile);
   tile.querySelector('[data-a=open]').onclick = () => window.open(img.src, '_blank', 'noopener');
   tile.querySelector('[data-a=again]').onclick = () => { resetTile(tile); makeThumbs([tile], prompt, engine); };
+  tile.querySelector('[data-a=edit]').onclick = () => editThumb(tile);
+  const form = tile.querySelector('.thumb-change');
+  tile.querySelector('[data-a=change]').onclick = () => {
+    form.hidden = !form.hidden;
+    if (!form.hidden) form.querySelector('input').focus();
+  };
+  form.onsubmit = e => {
+    e.preventDefault();
+    const change = form.querySelector('input').value.trim();
+    if (!change) { toast('Type what to add or change first'); return; }
+    changeThumb(tile, change);
+  };
+  undo.onclick = () => {
+    // swap back to the picture from before the last change
+    const prev = tile._history?.pop();
+    if (!prev) return;
+    URL.revokeObjectURL(tile._img.src);
+    tile._img.src = prev.url;
+    tile._prompt = prev.prompt;
+    undo.hidden = !tile._history.length;
+  };
+}
+
+// "Change with AI": AI redraws the thumbnail starting from it, adding what you described.
+async function changeThumb(tile, change) {
+  const media = tile.querySelector('.thumb-media'), form = tile.querySelector('.thumb-change');
+  const c = document.createElement('canvas');
+  c.width = 1024; c.height = 576;
+  c.getContext('2d').drawImage(tile._img, 0, 0, 1024, 576);
+  const source = c.toDataURL('image/webp', 0.9).split(',')[1];
+  const prompt = `${tile._prompt}, ${change}`;
+  tile.querySelectorAll('button').forEach(b => { b.disabled = true; });
+  form.hidden = true;
+  media.insertAdjacentHTML('beforeend', '<div class="thumb-state over"><div class="spinner"></div><span>Getting in line...</span></div>');
+  try {
+    const job = await hordeSubmit(prompt, 1, source);
+    await hordeWait(job, text => tileLabel(tile, text));
+    tileLabel(tile, 'Almost done...');
+    showThumb(tile, await hordeImage(job, 0), prompt, 'best', true);
+    form.querySelector('input').value = '';
+    toast('Changed. Press Undo change to go back.', 2600);
+  } catch (err) {
+    media.querySelector('.thumb-state')?.remove();
+    tile.querySelectorAll('button').forEach(b => { b.disabled = false; });
+    toast(err.status === 451 ? 'The safety filter blocked that change. Try different words.' : 'The AI is busy right now. Try the change again in a minute.', 3600);
+  }
+}
+
+// "Edit": open the thumbnail in the photo editor (text, filters, blur, AI Unblur, export).
+async function editThumb(tile) {
+  const blob = await (await fetch(tile._img.src)).blob();
+  setView('photo');
+  await Photo.open(new File([blob], 'AI thumbnail.png', { type: blob.type || 'image/png' }));
+  const headline = $('#th-headline').value.trim();
+  if (headline) Photo.addText({ text: headline.toUpperCase(), x: 0.3, y: 0.82, size: 0.13, font: 'anton', style: 'outline' });
+  toast(headline ? 'Opened in the photo editor with your big text, which you can drag or change' : 'Opened in the photo editor', 2800);
 }
 
 function showThumbError(tile, msg, prompt, engine) {

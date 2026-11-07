@@ -979,7 +979,15 @@ export function initPhoto(api) {
   });
 }
 
-export const Photo = { open, isActive, openExport };
+// Adds a text on top of the open photo (used when a thumbnail is opened here).
+function addText(props) {
+  if (!P.base) return;
+  P.texts.push(newText(props));
+  compose();
+  textLayer?.syncPanel();
+}
+
+export const Photo = { open, isActive, openExport, addText };
 
 // handy for debugging in the console
 window.cutroomPhoto = { P, open, setPhoto, FILTERS };

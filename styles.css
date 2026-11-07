@@ -654,6 +654,14 @@ body.dragging-sound, body.dragging-sound * { cursor: grabbing !important; user-s
 .tool-btn.rec-more:hover { filter: brightness(1.08); background: var(--rec); }
 .tool-btn.rec-more .rec-dot { width: 9px; height: 9px; box-shadow: 0 0 0 2px rgba(255,255,255,.3); }
 
+/* thumbnail add-ons */
+.thumb-actions.second { padding-top: 0; }
+.thumb-change { display: flex; gap: 6px; padding: 0 6px 8px; }
+.thumb-change input { flex: 1; min-width: 0; height: 34px; border: 1px solid var(--line); border-radius: 9px; padding: 0 10px; background: var(--surface-solid); outline: none; font-size: 12.5px; }
+.thumb-change input:focus { border-color: var(--accent); }
+.thumb-change .primary-btn { height: 34px; padding: 0 12px; font-size: 12.5px; }
+.thumb-state.over { background: rgba(10, 12, 18, 0.55); backdrop-filter: blur(2px); }
+
 /* photo export */
 .pe-preview { border-radius: 14px; overflow: hidden; background: repeating-conic-gradient(rgba(127,127,127,.18) 0 25%, transparent 0 50%) 0 0 / 16px 16px; display: grid; place-items: center; max-height: 220px; }
 .pe-preview img { max-width: 100%; max-height: 220px; display: block; }
