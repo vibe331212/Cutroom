@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Anton&family=Bangers&family=Bebas+Neue&family=Caveat:wght@700&family=Lobster&family=Pacifico&family=Permanent+Marker&family=Playfair+Display:wght@800&family=Press+Start+2P&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=29">
+<link rel="stylesheet" href="styles.css?v=30">
 </head>
 <body data-tone="light">
 <canvas id="scene" class="scene-bg"></canvas>
@@ -186,7 +186,7 @@
 
     <section class="tab-panel" data-panel="sounds">
       <div class="h">Sound effects</div>
-      <div class="sub">Real recorded sounds by Kenney.nl (free for anyone to use, even in your videos), plus extra ones made in Cutroom. Click a sound to hear it. Drag it onto the timeline, or press + to add it at the playhead. Drag orange tags to move them.</div>
+      <div class="sub">Real recorded sounds by Kenney.nl (free for anyone to use, even in your videos), plus extra ones made in Cutroom. Click a sound to hear it. Drag it onto the timeline, or press + to add it at the playhead. Drag an orange bar to move it, or drag its edges to make the sound shorter.</div>
       <div class="field-label">On your video</div>
       <div class="sfx-list" id="sfx-list"></div>
       <div class="pe-help" id="sfx-empty">No sounds yet. Move the playhead, then press + on a sound.</div>
@@ -437,6 +437,8 @@
   </div>
 </div>
 
+<div class="cam-bubble" id="cam-bubble" hidden title="Only you see this. Drag to move it."><video muted playsinline autoplay></video></div>
+
 <div class="countdown" id="countdown" hidden><span></span></div>
 
 <div class="rec-hud" id="rec-hud" hidden>
@@ -574,6 +576,6 @@
 <div class="toast" id="toast"></div>
 <div class="media-pool" id="media-pool"></div>
 
-<script type="module" src="js/app.js?v=34"></script>
+<script type="module" src="js/app.js?v=35"></script>
 </body>
 </html>

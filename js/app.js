@@ -1036,13 +1036,20 @@ function drawTimeline() {
     return lw;
   };
   for (const e of S.sfx) {
-    const x = tX(e.at);
-    if (x < GUTTER - 120 || x > Wd) continue;
-    const lw = tag(x, soundOf(e.sound)?.name || 'Sound', e.id === dragId);
-    sfxRects.push({ id: e.id, x0: x - 4, x1: x + lw, y0: ay, y1: ay + ah });
+    const x = tX(e.at), xe = tX(e.at + sfxPlayLen(e));
+    if (xe < GUTTER || x > Wd) continue;
+    const strong = e.id === dragId;
+    // the bar shows how long the sound plays; its edges can be dragged to shorten it
+    tx.fillStyle = strong ? 'rgba(234,88,12,0.38)' : 'rgba(249,115,22,0.24)';
+    rr(tx, x, ay + 2, Math.max(4, xe - x), ah - 4, 6); tx.fill();
+    tx.strokeStyle = '#f97316'; tx.lineWidth = 1.5;
+    rr(tx, x + 0.75, ay + 2.75, Math.max(3, xe - x - 1.5), ah - 5.5, 5.5); tx.stroke();
+    if (xe - x > 16) { tx.fillStyle = '#f97316'; rr(tx, xe - 5, ay + ah / 2 - 8, 3, 16, 1.5); tx.fill(); }
+    tag(x, soundOf(e.sound)?.name || 'Sound', strong);
+    sfxRects.push({ id: e.id, x0: x - 4, x1: Math.max(xe, x + 30), xe, xs: x, y0: ay, y1: ay + ah });
     if (e.id === dragId) {
-      // the time, right above the tag you are dragging
-      const label = fmt(e.at), w = tx.measureText(label).width + 12;
+      // the time (or the new length), right above what you are dragging
+      const label = tlDrag.part === 'move' ? fmt(e.at) : `${sfxPlayLen(e).toFixed(2)}s long`, w = tx.measureText(label).width + 12;
       tx.fillStyle = '#ea580c'; rr(tx, x - w / 2, vy - 2, w, 16, 8); tx.fill();
       tx.fillStyle = '#fff'; tx.fillText(label, x - w / 2 + 6, vy + 6.5);
     }
@@ -1141,11 +1148,15 @@ function tlTime(e) {
 // sound tags you can grab on the timeline
 let sfxRects = [];
 let sfxDrop = null;
-function sfxAtPoint(e) {
+function sfxAtPoint(e, withPart = false) {
   const r = tl.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
   for (let i = sfxRects.length - 1; i >= 0; i--) {
     const h = sfxRects[i];
-    if (x >= h.x0 && x <= h.x1 && y >= h.y0 && y <= h.y1) return h.id;
+    if (!(x >= h.x0 && x <= h.x1 && y >= h.y0 && y <= h.y1)) continue;
+    if (!withPart) return h.id;
+    const wide = h.xe - h.xs > 22;
+    const part = wide && Math.abs(x - h.xe) <= 7 ? 'right' : wide && x - h.xs <= 5 && x >= h.xs - 4 ? 'left' : 'move';
+    return { id: h.id, part };
   }
   return null;
 }
@@ -1155,11 +1166,11 @@ tl.addEventListener('pointerdown', e => {
   if (!S.segments.length || e.button !== 0) return;
   try { tl.setPointerCapture(e.pointerId); } catch {}
   const t = tlTime(e);
-  const hitId = !S.enterHeld && !e.shiftKey && sfxAtPoint(e);
-  if (hitId) {
-    const it = S.sfx.find(x => x.id === hitId);
-    tlDrag = { mode: 'sfx', id: hitId, grab: rawTime(e) - it.at, startX: e.clientX, moved: false, before: editState() };
-    tl.style.cursor = 'grabbing';
+  const hit = !S.enterHeld && !e.shiftKey && sfxAtPoint(e, true);
+  if (hit) {
+    const it = S.sfx.find(x => x.id === hit.id);
+    tlDrag = { mode: 'sfx', id: hit.id, part: hit.part, grab: rawTime(e) - it.at, startX: e.clientX, moved: false, before: editState(), from0: it.from || 0, at0: it.at, end0: it.at + sfxPlayLen(it) };
+    tl.style.cursor = hit.part === 'move' ? 'grabbing' : 'ew-resize';
     tlDirty = true;
     return;
   }
@@ -1175,7 +1186,7 @@ tl.addEventListener('pointerdown', e => {
   }
 });
 tl.addEventListener('pointermove', e => {
-  if (!tlDrag) { tl.style.cursor = sfxAtPoint(e) ? 'grab' : ''; return; }
+  if (!tlDrag) { const h = sfxAtPoint(e, true); tl.style.cursor = !h ? '' : h.part === 'move' ? 'grab' : 'ew-resize'; return; }
   const r = tl.getBoundingClientRect(), x = e.clientX - r.left;
   if (x > tlW - 30) { S.scroll += 12; clampScroll(); }
   else if (x < GUTTER + 10) { S.scroll -= 12; clampScroll(); }
@@ -1183,7 +1194,23 @@ tl.addEventListener('pointermove', e => {
     const it = S.sfx.find(x => x.id === tlDrag.id);
     if (!it) return;
     if (Math.abs(e.clientX - tlDrag.startX) > 3) tlDrag.moved = true;
-    if (tlDrag.moved) { it.at = clamp(rawTime(e) - tlDrag.grab, 0, Math.max(0, total() - 0.02)); tlDirty = true; }
+    if (tlDrag.moved) {
+      const t = rawTime(e), full = sfxLength(it);
+      if (tlDrag.part === 'right') {
+        // shorten (or lengthen back) the end
+        it.len = clamp(t - it.at, 0.05, full - (it.from || 0));
+        if (it.len >= full - (it.from || 0) - 0.005) delete it.len;
+      } else if (tlDrag.part === 'left') {
+        // skip the start: the sound starts later, from further in
+        const start = clamp(t, tlDrag.at0 - tlDrag.from0, tlDrag.end0 - 0.05);
+        it.at = Math.max(0, start);
+        it.from = Math.max(0, tlDrag.from0 + (it.at - tlDrag.at0));
+        it.len = tlDrag.end0 - it.at;
+        if (it.from < 0.005) delete it.from;
+        if (it.len >= full - (it.from || 0) - 0.005) delete it.len;
+      } else it.at = clamp(t - tlDrag.grab, 0, Math.max(0, total() - 0.02));
+      tlDirty = true;
+    }
     return;
   }
   const t = tlTime(e);
@@ -1202,7 +1229,7 @@ const endTlDrag = () => {
       S.sfx.sort((a, b) => a.at - b.at);
       S.version++;
       renderSfxList();
-    } else if (it) playSoundNow(it.sound, it.vol ?? 1, it.voice);  // a click just plays it
+    } else if (it && d.part === 'move') playSoundNow(it.sound, it.vol ?? 1, it.voice, it.from || 0, it.len ?? null);  // a click just plays it
     tlDirty = true;
     return;
   }
@@ -1645,6 +1672,7 @@ async function beginRecording() {
   rec = { recorder, mode, display, cam, mic, compositor, chunks: [], words: [], startedAt: 0, pausedAcc: 0, pausedAt: 0, stopping: false, sr: null, hasMic: !!mic, stopAll, insertAt };
   recorder.ondataavailable = e => { if (e.data.size) rec?.chunks.push(e.data); };
   recorder.onstop = finishRecording;
+  if (mode === 'camera') showCamBubble(cam);  // see yourself while you record (not part of the video)
   [display, cam].forEach(s => s && s.getVideoTracks()[0].addEventListener('ended', stopRecording));
 
   await countdown(3);
@@ -1653,6 +1681,36 @@ async function beginRecording() {
   rec.startedAt = performance.now();
   showHud();
 
+}
+
+// A round live picture of you, only while recording with the camera. You can drag it around.
+function showCamBubble(stream) {
+  const box = $('#cam-bubble'), v = box.querySelector('video');
+  v.srcObject = stream;
+  v.play().catch(() => {});
+  box.hidden = false;
+}
+function hideCamBubble() {
+  const box = $('#cam-bubble');
+  box.hidden = true;
+  box.querySelector('video').srcObject = null;
+}
+function setupCamBubble() {
+  const box = $('#cam-bubble');
+  let drag = null;
+  box.addEventListener('pointerdown', e => {
+    const r = box.getBoundingClientRect();
+    drag = { dx: e.clientX - r.left, dy: e.clientY - r.top };
+    box.setPointerCapture(e.pointerId);
+  });
+  box.addEventListener('pointermove', e => {
+    if (!drag) return;
+    const s = box.offsetWidth;
+    box.style.left = `${clamp(e.clientX - drag.dx, 8, innerWidth - s - 8)}px`;
+    box.style.top = `${clamp(e.clientY - drag.dy, 8, innerHeight - s - 8)}px`;
+    box.style.right = box.style.bottom = 'auto';
+  });
+  box.addEventListener('pointerup', () => { drag = null; });
 }
 
 async function countdown(n) {
@@ -1709,6 +1767,7 @@ async function finishRecording() {
   rec = null;
   if (!r) return;
   hideHud();
+  hideCamBubble();
   r.stopAll();
   r.compositor?.stop();
   const type = (r.recorder.mimeType || 'video/webm').split(';')[0];
@@ -2456,17 +2515,36 @@ const sfxPlaying = new Set();
 
 let sfxVoice = 'man';  // the voice type picked in the Sounds tab
 const voiceTypeName = v => (VOICE_TYPES.find(t => t.id === v) || VOICE_TYPES[0]).name;
-async function playSoundNow(id, vol = 1, voice = 'man') {
+async function playSoundNow(id, vol = 1, voice = 'man', from = 0, len = null) {
   ensureAudio();
   const buf = await renderSound(id, voice);
+  sfxDur.set(`${id}|${voice || 'man'}`, buf.duration);
   const src = actx.createBufferSource(), g = actx.createGain();
   src.buffer = buf;
-  g.gain.value = vol;
+  const t = actx.currentTime, play = Math.min(len ?? buf.duration, buf.duration - from);
+  g.gain.setValueAtTime(from > 0 ? 0 : vol, t);
+  if (from > 0) g.gain.linearRampToValueAtTime(vol, t + 0.012);
+  if (play < buf.duration - from - 0.01) {
+    g.gain.setValueAtTime(vol, t + Math.max(0, play - 0.035));
+    g.gain.linearRampToValueAtTime(0, t + play);
+  }
   src.connect(g).connect(master);  // through master, so exports hear it too
   src.onended = () => sfxPlaying.delete(src);
   sfxPlaying.add(src);
-  src.start();
+  src.start(t, from, play + 0.01);
 }
+// how long each sound is, so the timeline can draw it as a bar
+const sfxDur = new Map();
+function sfxLength(e) {
+  const key = `${e.sound}|${e.voice || 'man'}`;
+  if (!sfxDur.has(key)) {
+    sfxDur.set(key, 0.6);  // a guess until the sound is loaded
+    renderSound(e.sound, e.voice || 'man').then(b => { sfxDur.set(key, b.duration); tlDirty = true; renderSfxList(); }).catch(() => {});
+  }
+  return sfxDur.get(key);
+}
+// the part of a placed sound that plays
+const sfxPlayLen = e => Math.max(0.05, Math.min(e.len ?? Infinity, sfxLength(e) - (e.from || 0)));
 function stopSfx() {
   for (const s of sfxPlaying) { try { s.stop(); } catch {} }
   sfxPlaying.clear();
@@ -2475,7 +2553,7 @@ function stopSfx() {
 function fireSfx() {
   const now = S.playhead;
   if (now < sfxFrom || now - sfxFrom > 0.5) { sfxFrom = now; return; }  // a jump, not normal playing
-  for (const e of S.sfx) if (e.at > sfxFrom && e.at <= now) playSoundNow(e.sound, e.vol ?? 1, e.voice);
+  for (const e of S.sfx) if (e.at > sfxFrom && e.at <= now) playSoundNow(e.sound, e.vol ?? 1, e.voice, e.from || 0, e.len ?? null);
   sfxFrom = now;
 }
 
@@ -2555,7 +2633,7 @@ function buildSoundsPanel() {
     if (!row || !b) return;
     const it = S.sfx.find(x => x.id === row.dataset.id);
     if (!it) return;
-    if (b.dataset.act === 'hear') { seek(it.at); playSoundNow(it.sound, it.vol, it.voice); return; }
+    if (b.dataset.act === 'hear') { seek(it.at); playSoundNow(it.sound, it.vol, it.voice, it.from || 0, it.len ?? null); return; }
     snapshot();
     if (b.dataset.act === 'move') { it.at = S.playhead; S.sfx.sort((a, c) => a.at - c.at); }
     if (b.dataset.act === 'del') S.sfx = S.sfx.filter(x => x !== it);
@@ -2626,7 +2704,7 @@ function renderSfxList() {
   box.innerHTML = S.sfx.map(e => `
     <div class="sfx-row" data-id="${e.id}">
       <button class="icon-btn sm" data-act="hear" title="Jump there and hear it"><svg class="i"><use href="#i-play"/></svg></button>
-      <div class="sfx-meta"><b>${esc(soundOf(e.sound)?.name || 'Sound')}${e.voice && e.voice !== 'man' ? ` (${voiceTypeName(e.voice)})` : ''}</b><span>at ${fmt(e.at)}</span></div>
+      <div class="sfx-meta"><b>${esc(soundOf(e.sound)?.name || 'Sound')}${e.voice && e.voice !== 'man' ? ` (${voiceTypeName(e.voice)})` : ''}</b><span>at ${fmt(e.at)} · ${sfxPlayLen(e).toFixed(2)}s${e.len != null || e.from ? ' (shortened)' : ''}</span></div>
       <input type="range" min="0" max="1.5" step="0.05" value="${e.vol ?? 1}" title="Volume" aria-label="Volume">
       <button class="icon-btn sm" data-act="move" title="Move to the playhead"><svg class="i"><use href="#i-start"/></svg></button>
       <button class="icon-btn sm" data-act="del" title="Remove"><svg class="i"><use href="#i-trash"/></svg></button>
@@ -2902,6 +2980,7 @@ function loop(now) {
 loadSettings();
 initPhoto({ toast, openModal, closeModal });
 setupText();
+setupCamBubble();
 buildSoundsPanel();
 initAccount({
   toast, openModal, closeModal,
@@ -2932,4 +3011,4 @@ resizeTL();
 requestAnimationFrame(loop);
 
 // handy for debugging in the console
-window.cutroom = { S, importFiles, addSource, deleteRange, seek, play, pause, autoCaption, captionsFromBlob };
+window.cutroom = { S, importFiles, addSource, deleteRange, seek, play, pause, autoCaption, captionsFromBlob, showCamBubble, hideCamBubble };
