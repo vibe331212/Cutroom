@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Anton&family=Bangers&family=Bebas+Neue&family=Caveat:wght@700&family=Lobster&family=Pacifico&family=Permanent+Marker&family=Playfair+Display:wght@800&family=Press+Start+2P&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=18">
+<link rel="stylesheet" href="styles.css?v=19">
 </head>
 <body data-tone="light">
 <canvas id="scene" class="scene-bg"></canvas>
@@ -130,9 +130,10 @@
       <button class="tab active" data-tab="transcript"><svg class="i"><use href="#i-text"/></svg>Script</button>
       <button class="tab" data-tab="captions"><svg class="i"><use href="#i-cc"/></svg>Captions</button>
       <button class="tab" data-tab="text"><svg class="i"><use href="#i-type"/></svg>Text</button>
+      <button class="tab" data-tab="sounds"><svg class="i"><use href="#i-wave"/></svg>Sounds</button>
       <button class="tab" data-tab="effects"><svg class="i"><use href="#i-wand"/></svg>Effects</button>
       <button class="tab" data-tab="modes"><svg class="i"><use href="#i-layers"/></svg>Modes</button>
-      <button class="tab" data-tab="thumbnail"><svg class="i"><use href="#i-image"/></svg>Thumbnail</button>
+      <button class="tab" data-tab="thumbnail"><svg class="i"><use href="#i-image"/></svg>Thumb</button>
     </nav>
 
     <section class="tab-panel active" data-panel="transcript">
@@ -180,6 +181,15 @@
     </section>
 
     <section class="tab-panel" data-panel="text"><div id="text-panel" class="text-panel"></div></section>
+
+    <section class="tab-panel" data-panel="sounds">
+      <div class="h">Sound effects</div>
+      <div class="sub">Every sound here was made from scratch for Cutroom, so it is free to use. Click a sound to hear it, or + to add it where the playhead is.</div>
+      <div class="field-label">On your video</div>
+      <div class="sfx-list" id="sfx-list"></div>
+      <div class="pe-help" id="sfx-empty">No sounds yet. Move the playhead, then press + on a sound.</div>
+      <div id="sound-groups"></div>
+    </section>
 
     <section class="tab-panel" data-panel="effects">
       <div class="h">Voice changer</div>
@@ -559,6 +569,6 @@
 <div class="toast" id="toast"></div>
 <div class="media-pool" id="media-pool"></div>
 
-<script type="module" src="js/app.js?v=23"></script>
+<script type="module" src="js/app.js?v=24"></script>
 </body>
 </html>

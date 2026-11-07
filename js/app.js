@@ -4,6 +4,7 @@ import { initPhoto, Photo, FILTERS, applyFilter, findFaces } from './photo.js?v=
 import { VOICES, makeVoice, voiceName } from './voices.js?v=3';
 import { initAccount, settingsChanged, syncSaveButton } from './account.js?v=1';
 import { TextLayer, newText } from './text.js?v=1';
+import { SOUNDS, SOUND_GROUPS, soundOf, renderSound } from './sfx.js?v=1';
 
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -29,6 +30,7 @@ const S = {
   sources: new Map(),      // id -> source (one imported or recorded file)
   segments: [],            // the edit: ordered pieces of sources {id, src, start, end}
   texts: [],               // text on the video: {id, text, x, y, size, color, font, rot, style, a, b}
+  sfx: [],                 // sound effects on the timeline: {id, sound, at, vol}
   undo: [], redo: [],
   playhead: 0,
   playing: false,
@@ -395,7 +397,7 @@ function locate(t) {
   return null;
 }
 
-const editState = () => JSON.stringify({ g: S.segments, t: S.texts });
+const editState = () => JSON.stringify({ g: S.segments, t: S.texts, s: S.sfx });
 function snapshot() {
   S.undo.push(editState());
   if (S.undo.length > 200) S.undo.shift();
@@ -404,7 +406,7 @@ function snapshot() {
 function restore(json) {
   const d = JSON.parse(json);
   S.segments = (Array.isArray(d) ? d : d.g).filter(s => S.sources.has(s.src));
-  if (!Array.isArray(d)) S.texts = d.t || [];
+  if (!Array.isArray(d)) { S.texts = d.t || []; S.sfx = d.s || []; renderSfxList(); }
   textLayer?.syncPanel();
   setSelection(null);
   afterEdit();
@@ -540,12 +542,14 @@ function play() {
   ensureAudio();
   if (S.playhead >= total() - 0.03) S.playhead = 0;
   S.playing = true;
+  sfxFrom = S.playhead - 0.02;  // a sound placed right where you press play still plays
   syncMedia(true);
   updatePlayButton();
 }
 function pause() {
   S.playing = false;
   for (const s of S.sources.values()) s.el.pause();
+  stopSfx();
   updatePlayButton();
 }
 function togglePlay() { S.playing ? pause() : play(); }
@@ -599,6 +603,7 @@ function stepPlayback(dt) {
       return;
     }
     S.playhead = L.tl0 + Math.max(0, ct - L.seg.start);
+    fireSfx();
     if (el.paused && !el.ended) el.play().catch(() => {});
   } else if (shuttle && shuttle.dir < 0) {
     // play backward: walk the playhead back and show each frame
@@ -1012,6 +1017,21 @@ function drawTimeline() {
       tx.restore();
     }
   });
+
+  // sound effects: orange tags on the audio row
+  tx.font = '700 10px Inter, system-ui, sans-serif';
+  for (const e of S.sfx) {
+    const x = tX(e.at);
+    if (x < GUTTER - 80 || x > Wd) continue;
+    const label = soundOf(e.sound)?.name || 'Sound';
+    const lw = Math.min(110, tx.measureText(label).width + 14);
+    tx.fillStyle = '#f97316';
+    rr(tx, x, ay + ah - 17, lw, 15, 7.5); tx.fill();
+    tx.fillRect(x, ay + 2, 2, ah - 4);
+    tx.save(); tx.beginPath(); tx.rect(x, ay, lw, ah); tx.clip();
+    tx.fillStyle = '#fff'; tx.fillText(label, x + 7, ay + ah - 9.5);
+    tx.restore();
+  }
 
   // text bars (purple) along the top of the captions row
   for (const t of S.texts) {
@@ -2268,6 +2288,92 @@ function setView(v) {
   stopShuttle();
 }
 
+// ---------- sound effects (all made from scratch in sfx.js)
+let sfxFrom = 0;              // where the playhead was last time we checked
+const sfxPlaying = new Set();
+
+async function playSoundNow(id, vol = 1) {
+  ensureAudio();
+  const buf = await renderSound(id);
+  const src = actx.createBufferSource(), g = actx.createGain();
+  src.buffer = buf;
+  g.gain.value = vol;
+  src.connect(g).connect(master);  // through master, so exports hear it too
+  src.onended = () => sfxPlaying.delete(src);
+  sfxPlaying.add(src);
+  src.start();
+}
+function stopSfx() {
+  for (const s of sfxPlaying) { try { s.stop(); } catch {} }
+  sfxPlaying.clear();
+}
+// While playing, start every sound whose spot the playhead just passed.
+function fireSfx() {
+  const now = S.playhead;
+  if (now < sfxFrom || now - sfxFrom > 0.5) { sfxFrom = now; return; }  // a jump, not normal playing
+  for (const e of S.sfx) if (e.at > sfxFrom && e.at <= now) playSoundNow(e.sound, e.vol ?? 1);
+  sfxFrom = now;
+}
+
+function addSfx(id) {
+  if (!S.segments.length) { toast('Add a video first, then add sounds to it'); return; }
+  snapshot();
+  S.sfx.push({ id: uid('fx'), sound: id, at: S.playhead, vol: 1 });
+  S.sfx.sort((a, b) => a.at - b.at);
+  S.version++;
+  tlDirty = true;
+  renderSfxList();
+  playSoundNow(id);
+  toast(`${soundOf(id).name} added at ${fmt(S.playhead, false)}`, 1600);
+}
+
+function buildSoundsPanel() {
+  $('#sound-groups').innerHTML = SOUND_GROUPS.map(g => `
+    <div class="field-label">${g}</div>
+    <div class="sound-grid">${SOUNDS.filter(s => s.group === g).map(s => `
+      <div class="sound-card" data-sound="${s.id}">
+        <button class="sound-play" data-act="hear" title="Hear it"><svg class="i"><use href="#i-play"/></svg></button>
+        <span class="sound-name">${esc(s.name)}</span>
+        <button class="sound-add" data-act="add" title="Add at the playhead"><svg class="i"><use href="#i-plus"/></svg></button>
+      </div>`).join('')}</div>`).join('');
+  $('#sound-groups').addEventListener('click', e => {
+    const b = e.target.closest('[data-act]'), card = e.target.closest('.sound-card');
+    if (!card) return;
+    if (b?.dataset.act === 'add') addSfx(card.dataset.sound);
+    else playSoundNow(card.dataset.sound);
+  });
+  $('#sfx-list').addEventListener('click', e => {
+    const row = e.target.closest('[data-id]'), b = e.target.closest('[data-act]');
+    if (!row || !b) return;
+    const it = S.sfx.find(x => x.id === row.dataset.id);
+    if (!it) return;
+    if (b.dataset.act === 'hear') { seek(it.at); playSoundNow(it.sound, it.vol); return; }
+    snapshot();
+    if (b.dataset.act === 'move') { it.at = S.playhead; S.sfx.sort((a, c) => a.at - c.at); }
+    if (b.dataset.act === 'del') S.sfx = S.sfx.filter(x => x !== it);
+    S.version++; tlDirty = true;
+    renderSfxList();
+  });
+  $('#sfx-list').addEventListener('input', e => {
+    const row = e.target.closest('[data-id]'), it = row && S.sfx.find(x => x.id === row.dataset.id);
+    if (it) { it.vol = +e.target.value; S.version++; }
+  });
+  renderSfxList();
+}
+function renderSfxList() {
+  const box = $('#sfx-list');
+  if (!box) return;
+  $('#sfx-empty').hidden = S.sfx.length > 0;
+  box.innerHTML = S.sfx.map(e => `
+    <div class="sfx-row" data-id="${e.id}">
+      <button class="icon-btn sm" data-act="hear" title="Jump there and hear it"><svg class="i"><use href="#i-play"/></svg></button>
+      <div class="sfx-meta"><b>${esc(soundOf(e.sound)?.name || 'Sound')}</b><span>at ${fmt(e.at)}</span></div>
+      <input type="range" min="0" max="1.5" step="0.05" value="${e.vol ?? 1}" title="Volume" aria-label="Volume">
+      <button class="icon-btn sm" data-act="move" title="Move to the playhead"><svg class="i"><use href="#i-start"/></svg></button>
+      <button class="icon-btn sm" data-act="del" title="Remove"><svg class="i"><use href="#i-trash"/></svg></button>
+    </div>`).join('');
+}
+
 // ---------- text on the video
 let textLayer = null;
 function setupText() {
@@ -2320,6 +2426,7 @@ function projectSnapshot() {
       segments: S.segments,
       captions: S.captions,
       texts: S.texts,
+      sfx: S.sfx,
       sources: sources.map(src => ({
         id: src.id, key: src.key, name: src.name, fileName: src.file.name, type: src.file.type,
         kind: src.kind, duration: src.duration, words: src.words.map(({ text, t0, t1 }) => ({ text, t0, t1 })),
@@ -2343,6 +2450,8 @@ async function openSavedProject(row, files) {
   S.segments = (row.data.segments || []).filter(g => ids[g.src]).map(g => ({ ...g, id: uid('g'), src: ids[g.src] }));
   if (row.data.captions) { Object.assign(S.captions, row.data.captions); syncCaptionUI(); }
   S.texts = row.data.texts || [];
+  S.sfx = row.data.sfx || [];
+  renderSfxList();
   textLayer?.select(null);
   $('#project-name').value = row.name;
   S.undo = []; S.redo = [];
@@ -2523,6 +2632,7 @@ function loop(now) {
 loadSettings();
 initPhoto({ toast, openModal, closeModal });
 setupText();
+buildSoundsPanel();
 initAccount({
   toast, openModal, closeModal,
   getSettings: () => ({ theme: S.theme, framed: S.framed, captions: { ...S.captions } }),
