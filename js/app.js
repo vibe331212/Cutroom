@@ -1,6 +1,6 @@
 // Cutroom: a browser video editor. Plain JavaScript modules, no build step.
 import { THEMES, Scene, findTheme, renderPreview } from './themes.js?v=4';
-import { initPhoto, Photo, FILTERS, applyFilter, findFaces } from './photo.js?v=14';
+import { initPhoto, Photo, FILTERS, applyFilter, findFaces } from './photo.js?v=16';
 import { VOICES, makeVoice, voiceName } from './voices.js?v=3';
 import { initAccount, settingsChanged, syncSaveButton } from './account.js?v=1';
 import { TextLayer, newText } from './text.js?v=1';

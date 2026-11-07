@@ -14,7 +14,7 @@ const P = {
   filters: [],          // filters mixed together, applied in order (empty = original)
   texts: [],            // text on the photo
   amount: 0.7,
-  adjust: { b: 0, c: 0, s: 0 },
+  adjust: { b: 0, c: 0, s: 0, k: 0 },
   blurStrength: 60,
   brush: 0.07,
   brushOn: false,
@@ -327,6 +327,27 @@ export function applyFilter(src, id, amount, faces) {
   return out;
 }
 
+// Soften: a smooth blur over the whole photo.
+function soften(src, amount) {
+  if (!amount) return src;
+  const w = src.width, h = src.height, px = amount * Math.max(w, h) / 45;
+  const out = makeCanvas(w, h), g = out.getContext('2d');
+  if (CAN_FILTER) {
+    g.filter = `blur(${px}px)`;
+    const pad = px * 2;
+    g.drawImage(src, -pad, -pad, w + pad * 2, h + pad * 2);
+    g.filter = 'none';
+  } else {
+    // browsers without canvas blur: shrink and grow back, which softens too
+    const f = clamp(px, 1.5, 40), small = makeCanvas(w / f, h / f), sg = small.getContext('2d');
+    sg.imageSmoothingQuality = 'high';
+    sg.drawImage(src, 0, 0, small.width, small.height);
+    g.imageSmoothingQuality = 'high';
+    g.drawImage(small, 0, 0, w, h);
+  }
+  return out;
+}
+
 function applyAdjust(src, { b, c, s }) {
   if (!b && !c && !s) return src;
   const add = b * 90, cf = 1 + c, sf = 1 + s;
@@ -354,7 +375,7 @@ async function rebuild() {
   if (token !== rebuildToken) return;
   let out = P.base;
   for (const id of P.filters) out = applyFilter(out, id, P.amount, P.faces);
-  processed = applyAdjust(out === P.base ? copyCanvas(out) : out, P.adjust);
+  processed = soften(applyAdjust(out === P.base ? copyCanvas(out) : out, P.adjust), P.adjust.k || 0);
   rebuildBlur();
   busy(false);
   compose();
@@ -375,7 +396,7 @@ function rebuildBlur() {
 function compose(original = false) {
   if (!P.base || !processed) return;
   vctx.globalCompositeOperation = 'copy';
-  vctx.drawImage(original ? P.base : processed, 0, 0);
+  vctx.drawImage(original ? (P.original || P.base) : processed, 0, 0);
   vctx.globalCompositeOperation = 'source-over';
   if (original) return;
   const lg = layer.getContext('2d');
@@ -392,9 +413,90 @@ function busy(on, text) {
   if (text) $('#ph-busy-text').textContent = text;
 }
 
+// ---------- AI Unblur: a free model that runs on this computer and needs no sign-in
+const UNBLUR_WORKER = `
+import { pipeline, env, RawImage } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.0.2';
+env.allowLocalModels = false;
+const MODEL = 'Xenova/swin2SR-realworld-sr-x4-64-bsrgan-psnr';
+let up = null, device = 'wasm';
+const progress = id => p => self.postMessage({ id, type: 'progress', p: { status: p.status, file: p.file, loaded: p.loaded, total: p.total } });
+self.onmessage = async e => {
+  const { id, data, width, height } = e.data;
+  try {
+    if (!up) up = await pipeline('image-to-image', MODEL, { dtype: 'q8', device: 'wasm', progress_callback: progress(id) });
+    self.postMessage({ id, type: 'status' });
+    const out = await up(new RawImage(new Uint8ClampedArray(data), width, height, 4).rgb());
+    self.postMessage({ id, type: 'done', data: out.data, width: out.width, height: out.height, channels: out.channels }, [out.data.buffer]);
+  } catch (err) {
+    self.postMessage({ id, type: 'error', message: String((err && err.message) || err) });
+  }
+};`;
+let unblurWorker = null;
+const UNBLUR_SIDE = 320;  // the model makes a picture 4 times this size
+
+function runUnblur(small, onMsg) {
+  if (!unblurWorker) unblurWorker = new Worker(URL.createObjectURL(new Blob([UNBLUR_WORKER], { type: 'text/javascript' })), { type: 'module' });
+  const id = `u${Date.now()}`;
+  const img = pixels(small);
+  return new Promise((res, rej) => {
+    const h = e => {
+      const m = e.data;
+      if (m.id !== id) return;
+      if (m.type === 'done') { unblurWorker.removeEventListener('message', h); res(m); }
+      else if (m.type === 'error') { unblurWorker.removeEventListener('message', h); rej(new Error(m.message)); }
+      else onMsg(m);
+    };
+    unblurWorker.addEventListener('message', h);
+    unblurWorker.postMessage({ id, data: img.data.buffer, width: img.width, height: img.height }, [img.data.buffer]);
+  });
+}
+
+async function aiUnblur() {
+  if (!P.base) { toast('Open or take a photo first'); return; }
+  const btn = $('#ph-unblur'), base = P.base;
+  btn.disabled = true;
+  busy(true, 'Getting AI Unblur ready...');
+  const files = {};
+  try {
+    const k = Math.min(1, UNBLUR_SIDE / Math.max(base.width, base.height));
+    const small = makeCanvas(base.width * k, base.height * k), sg = small.getContext('2d');
+    sg.imageSmoothingQuality = 'high';
+    sg.drawImage(base, 0, 0, small.width, small.height);
+    const out = await runUnblur(small, m => {
+      if (m.type === 'progress' && m.p.status === 'progress' && m.p.total) {
+        files[m.p.file] = [m.p.loaded, m.p.total];
+        const [l, t] = Object.values(files).reduce((a, [x, y]) => [a[0] + x, a[1] + y], [0, 0]);
+        busy(true, `Downloading AI Unblur ${Math.round(l / t * 100)}%`);
+      } else if (m.type === 'status') busy(true, 'AI is unblurring your photo...');
+    });
+    if (P.base !== base) return;  // a different photo was opened meanwhile
+    const rgba = new ImageData(out.width, out.height), o = rgba.data, ch = out.channels;
+    for (let i = 0, j = 0; i < o.length; i += 4, j += ch) {
+      o[i] = out.data[j]; o[i + 1] = out.data[j + 1]; o[i + 2] = out.data[j + 2]; o[i + 3] = 255;
+    }
+    const sharp = makeCanvas(base.width, base.height), g = sharp.getContext('2d');
+    g.imageSmoothingQuality = 'high';
+    g.drawImage(fromPixels(rgba), 0, 0, sharp.width, sharp.height);
+    pushHistory();
+    P.base = sharp;
+    P.adjust.k = 0;  // the Soften slider goes back to none
+    syncUI();
+    await rebuild();
+    makeThumbs(true);
+    toast('Photo unblurred. Hold "compare" to see the difference, or Cmd+Z to undo.', 3600);
+  } catch (err) {
+    console.error(err);
+    busy(false);
+    toast('AI Unblur could not finish. The first time needs internet. Try again.', 4000);
+  } finally {
+    busy(false);
+    btn.disabled = false;
+  }
+}
+
 // ---------- history (undo / redo)
 function snap() {
-  return { mask: mask ? copyCanvas(mask) : null, filters: [...P.filters], amount: P.amount, adjust: { ...P.adjust }, texts: JSON.parse(JSON.stringify(P.texts)) };
+  return { base: P.base, mask: mask ? copyCanvas(mask) : null, filters: [...P.filters], amount: P.amount, adjust: { ...P.adjust }, texts: JSON.parse(JSON.stringify(P.texts)) };
 }
 function pushHistory() {
   if (!P.base) return;
@@ -404,7 +506,8 @@ function pushHistory() {
   syncButtons();
 }
 function restore(st) {
-  const same = st.filters.join() === P.filters.join() && st.amount === P.amount && JSON.stringify(st.adjust) === JSON.stringify(P.adjust);
+  const same = st.base === P.base && st.filters.join() === P.filters.join() && st.amount === P.amount && JSON.stringify(st.adjust) === JSON.stringify(P.adjust);
+  if (st.base) P.base = st.base;
   P.filters = [...st.filters]; P.amount = st.amount; P.adjust = { ...st.adjust };
   P.texts = st.texts || [];
   textLayer?.syncPanel(); textLayer?.syncOverlay();
@@ -446,12 +549,13 @@ async function setPhoto(source, name) {
   const sw = source.width, sh = source.height, k = Math.min(1, MAX_SIDE / Math.max(sw, sh));
   P.base = makeCanvas(sw * k, sh * k);
   P.base.getContext('2d').drawImage(source, 0, 0, P.base.width, P.base.height);
+  P.original = P.base;
   P.name = name;
   P.faces = []; P.facesFound = false;
   P.filters = [];
   P.texts = [];
   textLayer?.select(null);
-  P.adjust = { b: 0, c: 0, s: 0 };
+  P.adjust = { b: 0, c: 0, s: 0, k: 0 };
   mask = makeCanvas(P.base.width, P.base.height);
   layer = makeCanvas(P.base.width, P.base.height);
   view.width = P.base.width; view.height = P.base.height;
@@ -490,7 +594,7 @@ async function makeThumbs(withFaces) {
     if (f.kind === 'face' && !withFaces) continue;
     if (token !== thumbToken) return;
     const out = applyFilter(small, f.id, f.kind === 'mix' ? 1 : 0.85, faces);
-    const el = $(`.filter-card[data-filter="${f.id}"] .fc-img`);
+    const el = $(`#filter-grid .filter-card[data-filter="${f.id}"] .fc-img`);
     if (el) { el.style.backgroundImage = `url(${out.toDataURL('image/jpeg', 0.82)})`; el.innerHTML = ''; }
     await sleep(0);
   }
@@ -691,7 +795,7 @@ function pickFilter(id, mix) {
 
 // Arrow keys walk through the filters (3 per row); Return picks the highlighted one.
 function moveFocus(step) {
-  const cards = $$('.filter-card');
+  const cards = $$('#filter-grid .filter-card');
   focusIndex = clamp((focusIndex < 0 ? 0 : focusIndex + step), 0, cards.length - 1);
   cards.forEach((c, i) => c.classList.toggle('focus', i === focusIndex));
   cards[focusIndex].scrollIntoView({ block: 'nearest', behavior: 'smooth' });
@@ -703,7 +807,7 @@ function showMixHint(on) {
 // ---------- UI
 function syncUI() {
   const kinds = P.filters.map(id => findFilter(id).kind);
-  $$('.filter-card').forEach(c => {
+  $$('#filter-grid .filter-card').forEach(c => {
     const n = P.filters.indexOf(c.dataset.filter);
     const on = c.dataset.filter === 'original' ? !P.filters.length : n >= 0;
     c.classList.toggle('active', on);
@@ -717,7 +821,7 @@ function syncUI() {
   $('#mix-count').textContent = `Mixing ${P.filters.length} of ${MAX_MIX}`;
   $('#ph-amount').value = P.amount;
   $('#amount-val').textContent = `${Math.round(P.amount * 100)}%`;
-  for (const k of ['b', 'c', 's']) {
+  for (const k of ['b', 'c', 's', 'k']) {
     $(`#adj-${k}`).value = P.adjust[k];
     $(`#adj-${k}-val`).textContent = Math.round(P.adjust[k] * 100);
   }
@@ -747,7 +851,7 @@ export function initPhoto(api) {
   $('#filter-grid').addEventListener('click', e => {
     const c = e.target.closest('.filter-card');
     if (!c) return;
-    focusIndex = $$('.filter-card').indexOf(c);
+    focusIndex = $$('#filter-grid .filter-card').indexOf(c);
     pickFilter(c.dataset.filter, mixKeys(e));
   });
   $('#mix-clear').onclick = () => { if (P.filters.length) { pushHistory(); P.filters = []; syncUI(); scheduleRebuild(); } };
@@ -757,7 +861,7 @@ export function initPhoto(api) {
   const endSlide = () => { sliding = false; };
   $('#ph-amount').addEventListener('input', e => { startSlide(); P.amount = +e.target.value; syncUI(); scheduleRebuild(140); });
   $('#ph-amount').addEventListener('change', endSlide);
-  for (const k of ['b', 'c', 's']) {
+  for (const k of ['b', 'c', 's', 'k']) {
     $(`#adj-${k}`).addEventListener('input', e => { startSlide(); P.adjust[k] = +e.target.value; syncUI(); scheduleRebuild(90); });
     $(`#adj-${k}`).addEventListener('change', endSlide);
   }
@@ -770,6 +874,7 @@ export function initPhoto(api) {
     compose();
   };
 
+  $('#ph-unblur').onclick = aiUnblur;
   $('#ph-open').onclick = () => $('#ph-file').click();
   $('#ph-take').onclick = openCamera;
   $('#ph-empty').addEventListener('click', e => {
@@ -783,7 +888,7 @@ export function initPhoto(api) {
   $('#ph-reset').onclick = () => {
     if (!P.base) return;
     pushHistory();
-    P.filters = []; P.texts = []; textLayer?.select(null); P.amount = 0.7; P.adjust = { b: 0, c: 0, s: 0 };
+    P.filters = []; P.texts = []; textLayer?.select(null); P.amount = 0.7; P.adjust = { b: 0, c: 0, s: 0, k: 0 };
     mask.getContext('2d').clearRect(0, 0, mask.width, mask.height);
     syncUI(); scheduleRebuild();
   };
@@ -832,7 +937,7 @@ export function initPhoto(api) {
     if (e.key in steps && e.target.type !== 'range') { e.preventDefault(); moveFocus(steps[e.key]); return; }
     if (e.key === 'Enter' && focusIndex >= 0) {
       e.preventDefault();
-      pickFilter($$('.filter-card')[focusIndex].dataset.filter, mixKeys(e));
+      pickFilter($$('#filter-grid .filter-card')[focusIndex].dataset.filter, mixKeys(e));
     }
   });
   addEventListener('keyup', e => {
