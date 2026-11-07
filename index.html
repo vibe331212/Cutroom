@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Anton&family=Bangers&family=Bebas+Neue&family=Caveat:wght@700&family=Lobster&family=Pacifico&family=Permanent+Marker&family=Playfair+Display:wght@800&family=Press+Start+2P&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=21">
+<link rel="stylesheet" href="styles.css?v=22">
 </head>
 <body data-tone="light">
 <canvas id="scene" class="scene-bg"></canvas>
@@ -133,6 +133,7 @@
       <button class="tab" data-tab="sounds"><svg class="i"><use href="#i-wave"/></svg>Sounds</button>
       <button class="tab" data-tab="effects"><svg class="i"><use href="#i-wand"/></svg>Effects</button>
       <button class="tab" data-tab="modes"><svg class="i"><use href="#i-layers"/></svg>Modes</button>
+      <button class="tab" data-tab="thumbnail"><svg class="i"><use href="#i-image"/></svg>Thumb</button>
     </nav>
 
     <section class="tab-panel active" data-panel="transcript">
@@ -219,6 +220,44 @@
       <div class="mode-grid" id="mode-grid"></div>
     </section>
 
+    <section class="tab-panel" data-panel="thumbnail">
+      <div class="h">Thumbnail maker</div>
+      <div class="sub">Describe every little detail: who is in it, their face, what they are doing, colors, lighting, background and camera angle.</div>
+      <textarea id="th-prompt" rows="6" placeholder="A surprised young creator pointing at a giant glowing laptop, bright orange and teal colors, dramatic rim lighting, blurred city at night behind them, close-up, high contrast"></textarea>
+      <div class="chips" id="th-chips">
+        <button>high contrast</button><button>dramatic lighting</button><button>close-up face</button><button>bold saturated colors</button><button>clean simple background</button><button>shallow depth of field</button>
+      </div>
+      <div class="two-col">
+        <label class="field">Style
+          <select id="th-style">
+            <option value="">Any</option>
+            <option value="photo">Photo</option>
+            <option value="cinematic">Cinematic</option>
+            <option value="render">3D render</option>
+            <option value="illustration">Illustration</option>
+            <option value="anime">Anime</option>
+            <option value="comic">Comic</option>
+            <option value="neon">Neon</option>
+            <option value="minimal">Minimal</option>
+          </select>
+        </label>
+        <label class="field">Versions
+          <select id="th-count"><option>1</option><option selected>2</option><option>3</option><option>4</option></select>
+        </label>
+      </div>
+      <label class="field">Big text on top (optional)
+        <input id="th-headline" placeholder="I TRIED IT FOR 30 DAYS" maxlength="60">
+      </label>
+      <label class="field">Picture maker
+        <select id="th-engine">
+          <option value="best" selected>Best quality (free, about 1 to 4 minutes)</option>
+          <option value="fast">Fast (free, about 20 seconds, simpler pictures)</option>
+        </select>
+      </label>
+      <button id="btn-thumb" class="primary-btn full"><svg class="i"><use href="#i-wand"/></svg>Generate thumbnail</button>
+      <div class="thumb-grid" id="thumb-grid"></div>
+      <div class="panel-foot">Free, with no account or key. Best quality uses AI Horde, where volunteers share their computers, so you wait in a line. Fast uses Pollinations.</div>
+    </section>
   </aside>
 
   <section class="timeline panel" id="timeline-panel">
@@ -530,6 +569,6 @@
 <div class="toast" id="toast"></div>
 <div class="media-pool" id="media-pool"></div>
 
-<script type="module" src="js/app.js?v=27"></script>
+<script type="module" src="js/app.js?v=28"></script>
 </body>
 </html>

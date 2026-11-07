@@ -1824,6 +1824,244 @@ function resetExportModal() {
   $('#export-bar').style.width = '0';
 }
 
+// ---------- thumbnails (free, no account: AI Horde for best quality, Pollinations for speed)
+// server.py talks to both services; asking from the server is what keeps them key-free.
+const THUMB_STYLES = {
+  photo: 'photorealistic photo, shot on a DSLR, sharp focus',
+  cinematic: 'cinematic film still, anamorphic lighting, color graded',
+  render: '3D render, soft studio lighting, glossy materials',
+  illustration: 'clean digital illustration, bold shapes',
+  anime: 'anime key visual, vibrant cel shading',
+  comic: 'comic book art, bold ink lines, halftone shading',
+  neon: 'neon cyberpunk lighting, glowing accents, dark background',
+  minimal: 'minimalist flat design, lots of empty space',
+};
+const FAST_GAP = 46000;  // Pollinations' free tier: one picture every 45 seconds
+let lastFastAt = 0;
+const OLD_SERVER = 'Close Cutroom and open it again with Start Cutroom.command to turn on free thumbnails.';
+
+class ThumbError extends Error {
+  constructor(msg, status) { super(msg); this.status = status; }
+}
+async function blobURL(res) {
+  if (!res.ok) throw new ThumbError(`HTTP ${res.status}`, res.status);
+  const blob = await res.blob();
+  if (!blob.type.startsWith('image/')) throw new ThumbError('not an image', 502);
+  return URL.createObjectURL(blob);
+}
+const tileLabel = (tile, text) => { const sp = tile.querySelector('.thumb-state span'); if (sp) sp.textContent = text; };
+const waitText = s => s >= 90 ? `about ${Math.round(s / 60)} minutes` : s >= 50 ? 'about a minute' : `about ${Math.max(5, Math.round(s / 5) * 5)} seconds`;
+
+function makeTile(grid) {
+  const tile = document.createElement('div');
+  tile.className = 'thumb-tile';
+  tile.innerHTML = `
+    <div class="thumb-media"><div class="shimmer"></div><div class="thumb-state"><div class="spinner"></div><span>Getting in line...</span></div><div class="thumb-headline"></div></div>
+    <div class="thumb-actions">
+      <button data-a="dl" disabled><svg class="i"><use href="#i-download"/></svg>Download</button>
+      <button data-a="open" disabled><svg class="i"><use href="#i-external"/></svg>Open</button>
+      <button data-a="again" disabled><svg class="i"><use href="#i-refresh"/></svg>New version</button>
+    </div>`;
+  grid.prepend(tile);
+  return tile;
+}
+function resetTile(tile) {
+  tile.querySelectorAll('button').forEach(b => { b.disabled = true; });
+  const media = tile.querySelector('.thumb-media');
+  media.querySelector('.thumb-state')?.remove();
+  media.insertAdjacentHTML('afterbegin', '<div class="shimmer"></div><div class="thumb-state"><div class="spinner"></div><span>Getting in line...</span></div>');
+}
+
+async function generateThumbs() {
+  const base = $('#th-prompt').value.trim();
+  if (!base) { toast('Describe your thumbnail first'); $('#th-prompt').focus(); return; }
+  const style = THUMB_STYLES[$('#th-style').value];
+  const prompt = [base, style, 'YouTube thumbnail, 16:9, eye-catching composition, highly detailed'].filter(Boolean).join(', ');
+  const tiles = [...Array(+$('#th-count').value)].map(() => makeTile($('#thumb-grid')));
+  updateHeadlines();
+  const btn = $('#btn-thumb');
+  btn.disabled = true;
+  try { await makeThumbs(tiles, prompt, $('#th-engine').value); }
+  finally { btn.disabled = false; }
+}
+
+async function makeThumbs(tiles, prompt, engine) {
+  if (engine === 'best') {
+    try { await hordeThumbs(tiles, prompt); return; }
+    catch (err) {
+      console.warn('AI Horde', err);
+      if (err.message === OLD_SERVER) { tiles.forEach(t => showThumbError(t, OLD_SERVER, prompt, engine)); return; }
+      tiles.forEach(t => tileLabel(t, 'Best quality is busy, using Fast instead...'));
+    }
+  }
+  for (const tile of tiles) await fastThumb(tile, prompt);
+}
+
+// AI Horde: free community computers. One request makes all versions; we wait our turn in line.
+// The browser asks AI Horde directly (it allows that, and it uses your own connection). If that
+// fails, our own server asks instead (server.py on your computer, functions/ on the website).
+const HORDE = 'https://aihorde.net/api/v2';
+const HORDE_HEADERS = { apikey: '0000000000', 'Client-Agent': 'Cutroom:1.0:web', 'Content-Type': 'application/json' };
+const HORDE_MODELS = ['Juggernaut XL', 'AlbedoBase XL 3.1', 'AlbedoBase XL (SDXL)'];  // family-safe only
+const HORDE_NEGATIVE = 'text, words, letters, watermark, logo, signature, blurry, deformed, ugly, extra fingers, nsfw, nude';
+
+async function hordeSubmit(prompt, n) {
+  const seed = String(Math.floor(Math.random() * 1e9));
+  try {
+    const res = await fetch(`${HORDE}/generate/async`, {
+      method: 'POST', headers: HORDE_HEADERS,
+      body: JSON.stringify({
+        prompt: `${prompt} ### ${HORDE_NEGATIVE}`,
+        params: { width: 1024, height: 576, steps: 25, cfg_scale: 6, sampler_name: 'k_euler_a', n, seed },
+        nsfw: false, censor_nsfw: true, models: HORDE_MODELS, r2: true, shared: false,
+      }),
+    });
+    const j = await res.json();
+    if (res.ok && j.id) return { id: j.id, direct: true };
+  } catch {}
+  let res;
+  try {
+    res = await fetch('/api/horde/submit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, n, seed }) });
+  } catch { throw new ThumbError(OLD_SERVER, 0); }
+  if (res.status === 404 || res.status === 501) throw new ThumbError(OLD_SERVER, res.status);
+  if (!res.ok) throw new ThumbError(`submit ${res.status}`, res.status);
+  const { id } = await res.json();
+  if (!id) throw new ThumbError('no job id', 502);
+  return { id, direct: false };
+}
+
+async function hordeImage(job, i) {
+  if (!job.direct) return blobURL(await fetch(`/api/horde/result/${job.id}?i=${i}`));
+  const st = await (await fetch(`${HORDE}/generate/status/${job.id}`, { headers: HORDE_HEADERS })).json();
+  const g = (st.generations || [])[i];
+  if (!g) throw new ThumbError('not ready', 404);
+  if (g.censored) throw new ThumbError('censored', 451);
+  // the picture lives on a storage server; fetch it directly, or through our server if that is blocked
+  try { return await blobURL(await fetch(g.img)); }
+  catch { return blobURL(await fetch(`/api/horde/image?u=${encodeURIComponent(g.img)}`)); }
+}
+
+async function hordeThumbs(tiles, prompt) {
+  const job = await hordeSubmit(prompt, tiles.length);
+  const checkURL = job.direct ? `${HORDE}/generate/check/${job.id}` : `/api/horde/check/${job.id}`;
+  const t0 = Date.now();
+  for (;;) {
+    await sleep(4000);
+    if (Date.now() - t0 > 12 * 60000) throw new ThumbError('took too long', 504);
+    let c;
+    try { c = await (await fetch(checkURL, job.direct ? { headers: HORDE_HEADERS } : {})).json(); } catch { continue; }
+    if (c.faulted || c.is_possible === false) throw new ThumbError('faulted', 502);
+    if (c.done) break;
+    const text = c.queue_position > 0
+      ? `In line: ${c.queue_position} ahead of you, ${waitText(c.wait_time || 60)}`
+      : c.processing ? 'Painting your thumbnail now...' : `Almost there, ${waitText(c.wait_time || 20)}`;
+    tiles.forEach(t => tileLabel(t, text));
+  }
+  await Promise.all(tiles.map(async (tile, i) => {
+    try { showThumb(tile, await hordeImage(job, i), prompt, 'best'); }
+    catch (err) {
+      showThumbError(tile, err.status === 451 ? 'The safety filter blocked this one. Try different words.' : 'This one did not come out. Try again.', prompt, 'best');
+    }
+  }));
+}
+
+// Pollinations: quick, but only one picture every 45 seconds and sometimes busy.
+async function fastThumb(tile, prompt, attempt = 0) {
+  while (Date.now() - lastFastAt < FAST_GAP) {
+    tileLabel(tile, `Next picture in ${Math.ceil((FAST_GAP - (Date.now() - lastFastAt)) / 1000)} seconds (free limit)`);
+    await sleep(500);
+  }
+  tileLabel(tile, attempt ? 'Trying again...' : 'Painting your thumbnail...');
+  try {
+    const res = await fetch(`/api/thumb?${new URLSearchParams({ prompt, seed: Math.floor(Math.random() * 1e9) })}`);
+    lastFastAt = Date.now();
+    if (res.status === 404) { showThumbError(tile, OLD_SERVER, prompt, 'fast'); return; }
+    showThumb(tile, await blobURL(res), prompt, 'fast');
+  } catch (err) {
+    if (attempt < 2) { await sleep(4000); return fastThumb(tile, prompt, attempt + 1); }
+    showThumbError(tile, 'The picture service is busy right now. Try again in a minute, or pick Best quality.', prompt, 'fast');
+  }
+}
+
+function showThumb(tile, url, prompt, engine) {
+  const media = tile.querySelector('.thumb-media');
+  const img = new Image();
+  img.alt = 'Generated thumbnail';
+  img.src = url;
+  media.querySelector('.shimmer')?.remove();
+  media.querySelector('.thumb-state')?.remove();
+  const old = media.querySelector('img');
+  if (old) { URL.revokeObjectURL(old.src); old.remove(); }
+  media.prepend(img);
+  tile._img = img;
+  tile.querySelectorAll('button').forEach(b => { b.disabled = false; });
+  tile.querySelector('[data-a=dl]').onclick = () => downloadThumb(tile);
+  tile.querySelector('[data-a=open]').onclick = () => window.open(img.src, '_blank', 'noopener');
+  tile.querySelector('[data-a=again]').onclick = () => { resetTile(tile); makeThumbs([tile], prompt, engine); };
+}
+
+function showThumbError(tile, msg, prompt, engine) {
+  const media = tile.querySelector('.thumb-media');
+  media.querySelector('.shimmer')?.remove();
+  const st = media.querySelector('.thumb-state');
+  if (!st) return;
+  st.innerHTML = `<span>${esc(msg)}</span><button class="secondary-btn">Try again</button>`;
+  st.querySelector('button').addEventListener('click', () => { resetTile(tile); makeThumbs([tile], prompt, engine); });
+}
+
+function updateHeadlines() {
+  const text = $('#th-headline').value.trim();
+  $$('.thumb-headline').forEach(h => { h.textContent = text; });
+}
+
+async function downloadThumb(tile) {
+  const img = tile._img;
+  const headline = $('#th-headline').value.trim();
+  const name = `${fileBase()} thumbnail.png`;
+  try {
+    const c = document.createElement('canvas');
+    c.width = 1280; c.height = 720;
+    const g = c.getContext('2d');
+    g.drawImage(img, 0, 0, 1280, 720);
+    if (headline) drawHeadline(g, headline.toUpperCase(), 1280, 720);
+    const blob = await new Promise((res, rej) => c.toBlob(b => b ? res(b) : rej(new Error('blob')), 'image/png'));
+    download(blob, name);
+  } catch {
+    download(await (await fetch(img.src)).blob(), name.replace('.png', '.jpg'));
+  }
+}
+function drawHeadline(g, text, w, h) {
+  const maxW = w * 0.64;
+  let fs = 132;
+  g.font = `900 ${fs}px Inter, system-ui, sans-serif`;
+  const words = text.split(/\s+/);
+  let lines;
+  for (;;) {
+    lines = [''];
+    for (const wd of words) {
+      const test = lines[lines.length - 1] ? `${lines[lines.length - 1]} ${wd}` : wd;
+      if (g.measureText(test).width > maxW && lines[lines.length - 1]) lines.push(wd);
+      else lines[lines.length - 1] = test;
+    }
+    if (lines.length <= 3 || fs < 60) break;
+    fs -= 10;
+    g.font = `900 ${fs}px Inter, system-ui, sans-serif`;
+  }
+  const lh = fs * 1.02;
+  let y = h * 0.92 - lines.length * lh + lh * 0.8;
+  g.textBaseline = 'alphabetic';
+  g.lineJoin = 'round';
+  for (const line of lines) {
+    g.lineWidth = fs * 0.16; g.strokeStyle = '#000';
+    g.shadowColor = 'rgba(0,0,0,.5)'; g.shadowBlur = 24; g.shadowOffsetY = 8;
+    g.strokeText(line, w * 0.06, y);
+    g.shadowColor = 'transparent';
+    g.fillStyle = '#fff';
+    g.fillText(line, w * 0.06, y);
+    y += lh;
+  }
+}
+
 // ---------- video filters: the photo filters, on the clip piece under the playhead or on the selection
 const MAX_FX = 10;
 const FX_W = 720;  // frames are filtered at this width, which keeps playback smooth
@@ -2405,6 +2643,17 @@ function wireUI() {
     download(new Blob([srt], { type: 'text/plain' }), `${fileBase()}.srt`);
   };
   $('#frame-on').onchange = e => { S.framed = e.target.checked; syncCaptionUI(); };
+
+  $('#btn-thumb').onclick = generateThumbs;
+
+  $('#th-headline').oninput = updateHeadlines;
+  $('#th-chips').addEventListener('click', e => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    const ta = $('#th-prompt');
+    ta.value = ta.value.trim() ? `${ta.value.trim().replace(/[,.]$/, '')}, ${b.textContent}` : b.textContent;
+    ta.focus();
+  });
 
   // recording setup
   const recModes = $('#rec-modes');
