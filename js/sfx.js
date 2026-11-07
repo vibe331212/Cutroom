@@ -1,5 +1,6 @@
-// Sound effects, all made from scratch with Web Audio (no recordings are copied).
-// Each sound is built once into an audio buffer, then played on the timeline and in exports.
+// Sound effects. Real recordings come from Kenney (CC0, see sounds-real.js); the rest are made
+// from scratch with Web Audio. Each sound is loaded once, then played on the timeline and in exports.
+import { REAL_SOUNDS, REAL_GROUPS } from './sounds-real.js?v=1';
 
 const SR = 44100;
 const noiseCache = new WeakMap();
@@ -128,8 +129,8 @@ function clap(ctx, out, t, vol) {
   noise(ctx, out, { t, d: 0.03 + Math.random() * 0.03, vol, f: 1100 + Math.random() * 900, q: 0.8, a: 0.001 });
 }
 
-export const SOUND_GROUPS = ['Reactions', 'Cartoon', 'Transitions', 'Alerts', 'Music', 'Nature'];
-export const SOUNDS = [
+const MADE = ['Reactions', 'Cartoon', 'Transitions', 'Alerts', 'Music', 'Nature'];
+const MADE_SOUNDS = [
   // ---------- Reactions
   { id: 'wow', name: 'Wow', group: 'Reactions', dur: 1.1, make: (c, o) => voice(c, o, { d: 1.05, tract: 1.15, pitch: [[0, 210], [0.35, 330], [0.7, 280], [1, 170]], vowels: [[0, 'w'], [0.2, 'a'], [0.65, 'a'], [0.9, 'u'], [1, 'w']] }) },
   { id: 'wow-deep', name: 'Wow (deep)', group: 'Reactions', dur: 1.1, make: (c, o) => voice(c, o, { d: 1.05, tract: 1, pitch: [[0, 115], [0.35, 180], [0.7, 150], [1, 98]], vowels: [[0, 'w'], [0.2, 'a'], [0.65, 'a'], [0.9, 'u'], [1, 'w']] }) },
@@ -229,6 +230,9 @@ export const SOUNDS = [
   { id: 'ghost', name: 'Spooky ooo', group: 'Nature', dur: 2.2, make: (c, o) => { const s = tone(c, o, { f: 420, f2: 360, d: 2.1, vol: 0.3, a: 0.4, glide: 'lin' }); vibrato(c, s, { d: 2.1, rate: 5, depth: 18 }); } },
   { id: 'clock', name: 'Ticking clock', group: 'Nature', dur: 2.1, make: (c, o) => { for (let i = 0; i < 4; i++) { tone(c, o, { f: i % 2 ? 1400 : 1900, t: i * 0.5, d: 0.04, vol: 0.5 }); noise(c, o, { t: i * 0.5, d: 0.02, vol: 0.3, f: 3500, q: 3 }); } } },
 ];
+// real recordings first, then the made-from-scratch ones (for sounds Kenney does not have)
+export const SOUND_GROUPS = [...REAL_GROUPS, ...MADE.map(g => `Made in Cutroom: ${g}`)];
+export const SOUNDS = [...REAL_SOUNDS, ...MADE_SOUNDS.map(s => ({ ...s, group: `Made in Cutroom: ${s.group}` }))];
 export const soundOf = id => SOUNDS.find(s => s.id === id);
 
 const cache = new Map();
@@ -236,11 +240,18 @@ const cache = new Map();
 export function renderSound(id) {
   if (!cache.has(id)) {
     const s = soundOf(id);
-    const ctx = new OfflineAudioContext(2, Math.ceil(s.dur * SR), SR);
-    const out = ctx.createGain();
-    out.connect(ctx.destination);
-    s.make(ctx, out);
-    cache.set(id, ctx.startRendering().then(buf => {
+    let made;
+    if (s.file) {
+      // a real recording: load the file and decode it
+      made = fetch(s.file).then(r => r.arrayBuffer()).then(b => new OfflineAudioContext(2, 1, SR).decodeAudioData(b));
+    } else {
+      const ctx = new OfflineAudioContext(2, Math.ceil(s.dur * SR), SR);
+      const out = ctx.createGain();
+      out.connect(ctx.destination);
+      s.make(ctx, out);
+      made = ctx.startRendering();
+    }
+    cache.set(id, made.then(buf => {
       // make every sound about as loud as the others
       let peak = 0;
       for (let c = 0; c < buf.numberOfChannels; c++) for (const v of buf.getChannelData(c)) peak = Math.max(peak, Math.abs(v));

@@ -4,7 +4,7 @@ import { initPhoto, Photo, FILTERS, applyFilter, findFaces } from './photo.js?v=
 import { VOICES, makeVoice, voiceName } from './voices.js?v=3';
 import { initAccount, settingsChanged, syncSaveButton } from './account.js?v=1';
 import { TextLayer, newText } from './text.js?v=1';
-import { SOUNDS, SOUND_GROUPS, soundOf, renderSound } from './sfx.js?v=2';
+import { SOUNDS, SOUND_GROUPS, soundOf, renderSound } from './sfx.js?v=3';
 
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
