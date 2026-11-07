@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Anton&family=Bangers&family=Bebas+Neue&family=Caveat:wght@700&family=Lobster&family=Pacifico&family=Permanent+Marker&family=Playfair+Display:wght@800&family=Press+Start+2P&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=23">
+<link rel="stylesheet" href="styles.css?v=24">
 </head>
 <body data-tone="light">
 <canvas id="scene" class="scene-bg"></canvas>
@@ -127,11 +127,13 @@
 
   <aside class="inspector panel">
     <nav class="tabs" id="tabs">
-      <button class="tab active" data-tab="transcript"><svg class="i"><use href="#i-text"/></svg>Script</button>
-      <button class="tab" data-tab="captions"><svg class="i"><use href="#i-cc"/></svg>Captions</button>
-      <button class="tab" data-tab="text"><svg class="i"><use href="#i-type"/></svg>Text</button>
-      <button class="tab" data-tab="sounds"><svg class="i"><use href="#i-wave"/></svg>Sounds</button>
-      <button class="tab" data-tab="effects"><svg class="i"><use href="#i-wand"/></svg>Effects</button>
+      <button class="tab active" data-tab="transcript" data-for="video"><svg class="i"><use href="#i-text"/></svg>Script</button>
+      <button class="tab" data-tab="captions" data-for="video"><svg class="i"><use href="#i-cc"/></svg>Captions</button>
+      <button class="tab" data-tab="text" data-for="video"><svg class="i"><use href="#i-type"/></svg>Text</button>
+      <button class="tab" data-tab="sounds" data-for="video"><svg class="i"><use href="#i-wave"/></svg>Sounds</button>
+      <button class="tab" data-tab="effects" data-for="video"><svg class="i"><use href="#i-wand"/></svg>Effects</button>
+      <button class="tab" data-tab="ph-text" data-for="photo"><svg class="i"><use href="#i-type"/></svg>Text</button>
+      <button class="tab" data-tab="ph-effects" data-for="photo"><svg class="i"><use href="#i-wand"/></svg>Effects</button>
       <button class="tab" data-tab="modes"><svg class="i"><use href="#i-layers"/></svg>Modes</button>
       <button class="tab" data-tab="thumbnail"><svg class="i"><use href="#i-image"/></svg>Thumb</button>
     </nav>
@@ -209,6 +211,29 @@
       </div>
       <div class="filter-grid" id="vfx-grid"></div>
     </section>
+
+    <section class="tab-panel" data-panel="ph-effects">
+    <div class="ph-filters-sec" id="ph-filters-sec">
+    <div class="row-between"><div class="h">Filters</div><span class="face-status" id="face-status"></span></div>
+    <div class="sub">Hold <kbd>Cmd</kbd> <kbd>Option</kbd> and click to mix up to 10 filters.</div>
+    <div class="mix-hint" id="mix-hint" hidden>Mixing: click filters to add or remove them. <kbd>Up</kbd> <kbd>Down</kbd> to move, <kbd>Return</kbd> to add.</div>
+    <div class="mix-bar" id="mix-bar" hidden>
+      <div class="mix-top"><span class="mix-count" id="mix-count"></span><button class="mix-clear" id="mix-clear">Clear</button></div>
+      <div class="mix-list" id="mix-list"></div>
+    </div>
+    <div class="filter-grid" id="filter-grid"></div>
+    <div class="amount" id="amount-box">
+      <div class="adj-row"><span id="amount-label">Strength</span><span id="amount-val">70%</span></div>
+      <input type="range" id="ph-amount" min="0.05" max="1" step="0.01" value="0.7">
+    </div>
+    <div class="step-head"><div><div class="h">Blur</div><div class="sub">Everything you scribble over turns into pixels.</div></div></div>
+    <div class="adj"><div class="adj-row"><span>Brush size</span><span id="brush-val">7%</span></div><input type="range" id="ph-brush-size" min="0.02" max="0.25" step="0.005" value="0.07"></div>
+    <div class="adj"><div class="adj-row"><span>Pixel size</span><span id="blur-val">60%</span></div><input type="range" id="ph-blur" min="0" max="100" step="1" value="60"></div>
+    <button class="ghost-btn full" id="ph-clear-blur"><svg class="i"><use href="#i-trash"/></svg>Remove all blur</button>
+    </div>
+    </section>
+
+    <section class="tab-panel" data-panel="ph-text"><div id="ph-text-panel" class="text-panel"></div></section>
 
     <section class="tab-panel" data-panel="modes">
       <div class="h">Modes</div>
@@ -328,30 +353,6 @@
       </div>
     </main>
 
-    <aside class="panel ph-right">
-      <div class="ph-scroll">
-        <div class="seg ph-switch" id="ph-switch"><button data-sec="filters" class="active">Filters and blur</button><button data-sec="text">Text</button></div>
-        <div id="ph-text-panel" class="text-panel" hidden></div>
-        <div class="ph-filters-sec" id="ph-filters-sec">
-        <div class="row-between"><div class="h">Filters</div><span class="face-status" id="face-status"></span></div>
-        <div class="sub">Hold <kbd>Cmd</kbd> <kbd>Option</kbd> and click to mix up to 10 filters.</div>
-        <div class="mix-hint" id="mix-hint" hidden>Mixing: click filters to add or remove them. <kbd>Up</kbd> <kbd>Down</kbd> to move, <kbd>Return</kbd> to add.</div>
-        <div class="mix-bar" id="mix-bar" hidden>
-          <div class="mix-top"><span class="mix-count" id="mix-count"></span><button class="mix-clear" id="mix-clear">Clear</button></div>
-          <div class="mix-list" id="mix-list"></div>
-        </div>
-        <div class="filter-grid" id="filter-grid"></div>
-        <div class="amount" id="amount-box">
-          <div class="adj-row"><span id="amount-label">Strength</span><span id="amount-val">70%</span></div>
-          <input type="range" id="ph-amount" min="0.05" max="1" step="0.01" value="0.7">
-        </div>
-        <div class="step-head"><div><div class="h">Blur</div><div class="sub">Everything you scribble over turns into pixels.</div></div></div>
-        <div class="adj"><div class="adj-row"><span>Brush size</span><span id="brush-val">7%</span></div><input type="range" id="ph-brush-size" min="0.02" max="0.25" step="0.005" value="0.07"></div>
-        <div class="adj"><div class="adj-row"><span>Pixel size</span><span id="blur-val">60%</span></div><input type="range" id="ph-blur" min="0" max="100" step="1" value="60"></div>
-        <button class="ghost-btn full" id="ph-clear-blur"><svg class="i"><use href="#i-trash"/></svg>Remove all blur</button>
-        </div>
-      </div>
-    </aside>
   </section>
 </div>
 
@@ -569,6 +570,6 @@
 <div class="toast" id="toast"></div>
 <div class="media-pool" id="media-pool"></div>
 
-<script type="module" src="js/app.js?v=31"></script>
+<script type="module" src="js/app.js?v=32"></script>
 </body>
 </html>

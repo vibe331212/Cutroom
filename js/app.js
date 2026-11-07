@@ -1,6 +1,6 @@
 // Cutroom: a browser video editor. Plain JavaScript modules, no build step.
 import { THEMES, Scene, findTheme, renderPreview } from './themes.js?v=4';
-import { initPhoto, Photo, FILTERS, applyFilter, findFaces } from './photo.js?v=17';
+import { initPhoto, Photo, FILTERS, applyFilter, findFaces } from './photo.js?v=18';
 import { VOICES, makeVoice, voiceName } from './voices.js?v=3';
 import { initAccount, settingsChanged, syncSaveButton } from './account.js?v=1';
 import { TextLayer, newText } from './text.js?v=1';
@@ -2442,6 +2442,8 @@ function setView(v) {
   if (photo && S.playing) pause();
   document.body.classList.toggle('photo-mode', photo);
   $$('#view-switch button').forEach(b => b.classList.toggle('active', b.dataset.view === v));
+  const active = $('.tab.active');
+  if (!active || (active.dataset.for && active.dataset.for !== v)) setTab(photo ? 'ph-effects' : 'transcript');
   S.enterHeld = false;
   $('#timeline-panel').classList.remove('selecting');
   stopShuttle();
@@ -2708,7 +2710,7 @@ function wireUI() {
     $('#export-caps').checked = S.captions.on;
     openModal('export-modal');
   };
-  $('#mode-chip').onclick = () => { setView('video'); setTab('modes'); };
+  $('#mode-chip').onclick = () => setTab('modes');
   $('#view-switch').addEventListener('click', e => { const b = e.target.closest('button'); if (b) setView(b.dataset.view); });
 
   $('#btn-play').onclick = togglePlay;

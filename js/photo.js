@@ -968,15 +968,6 @@ export function initPhoto(api) {
     before: pushHistory,
   });
   textLayer.isBusy = () => P.brushOn;
-  $('#ph-switch').addEventListener('click', e => {
-    const b = e.target.closest('button');
-    if (!b) return;
-    const text = b.dataset.sec === 'text';
-    $$('#ph-switch button').forEach(x => x.classList.toggle('active', x === b));
-    $('#ph-text-panel').hidden = !text;
-    $('#ph-filters-sec').hidden = text;
-    textLayer.syncPanel();
-  });
 }
 
 // Adds a text on top of the open photo (used when a thumbnail is opened here).

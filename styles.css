@@ -470,8 +470,11 @@ body.photo-mode.photo-empty #btn-export { opacity: .5; }
 
 /* ---------- photo editor */
 .photo-view { display: none; }
-body.photo-mode .library, body.photo-mode .stage, body.photo-mode .inspector, body.photo-mode .timeline { display: none; }
-body.photo-mode .photo-view { display: grid; grid-area: 2 / 1 / 4 / 4; grid-template-columns: 268px minmax(0, 1fr) 344px; gap: 10px; min-height: 0; }
+body.photo-mode .library, body.photo-mode .stage, body.photo-mode .timeline { display: none; }
+body.photo-mode .photo-view { display: grid; grid-area: 2 / 1 / 4 / 3; grid-template-columns: 268px minmax(0, 1fr); gap: 10px; min-height: 0; }
+body.photo-mode .inspector { grid-area: 2 / 3 / 4 / 4; }
+/* each view shows only the tabs that work in it */
+body.photo-mode .tab[data-for=video], body:not(.photo-mode) .tab[data-for=photo] { display: none; }
 .ph-left { display: flex; flex-direction: column; gap: 9px; padding: 16px; overflow-y: auto; }
 .ph-left > * { flex-shrink: 0; }
 .ph-left .tip-card { margin-top: auto; }
@@ -538,8 +541,9 @@ body:not(.photo-empty) .ph-empty { display: none; }
 .opt.inline { margin: 0 auto 0 0; padding: 8px 12px; gap: 12px; }
 
 @media (max-width: 920px) {
-  body.photo-mode .app { grid-template-rows: 54px auto; }
+  body.photo-mode .app { grid-template-rows: 54px auto auto; }
   body.photo-mode .photo-view { grid-area: auto; grid-template-columns: 1fr; }
+  body.photo-mode .inspector { grid-area: auto; min-height: 420px; }
   .ph-stage { min-height: 420px; }
   .view-switch button { padding: 0 9px; }
 }
@@ -689,7 +693,7 @@ body.dragging-sound, body.dragging-sound * { cursor: grabbing !important; user-s
 
 @media (max-width: 1180px) {
   .app { grid-template-columns: 230px minmax(0, 1fr) 300px; }
-  body.photo-mode .photo-view { grid-template-columns: 210px minmax(0, 1fr) 280px; }
+  body.photo-mode .photo-view { grid-template-columns: 230px minmax(0, 1fr); }
   .filter-card .fc-name { font-size: 10.5px; padding: 5px 2px 6px; }
   .ph-left { padding: 14px; }
   .ph-scroll { padding: 14px; }
