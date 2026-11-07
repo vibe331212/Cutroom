@@ -1672,7 +1672,7 @@ async function beginRecording() {
   rec = { recorder, mode, display, cam, mic, compositor, chunks: [], words: [], startedAt: 0, pausedAcc: 0, pausedAt: 0, stopping: false, sr: null, hasMic: !!mic, stopAll, insertAt };
   recorder.ondataavailable = e => { if (e.data.size) rec?.chunks.push(e.data); };
   recorder.onstop = finishRecording;
-  if (mode === 'camera') showCamBubble(cam);  // see yourself while you record (not part of the video)
+  if (cam) showCamBubble(cam, mode === 'screenface');  // see yourself while you record (Camera and Screen + face)
   [display, cam].forEach(s => s && s.getVideoTracks()[0].addEventListener('ended', stopRecording));
 
   await countdown(3);
@@ -1684,8 +1684,18 @@ async function beginRecording() {
 }
 
 // A round live picture of you, only while recording with the camera. You can drag it around.
-function showCamBubble(stream) {
+function showCamBubble(stream, matchCircle = false) {
   const box = $('#cam-bubble'), v = box.querySelector('video');
+  box.style.left = box.style.top = box.style.right = box.style.bottom = box.style.width = box.style.height = '';
+  if (matchCircle) {
+    // same size and corner as the face circle in the video, so if this window is being recorded the two line up
+    const d = Math.round(Math.min(innerWidth, innerHeight) * REC.size), m = Math.round(Math.min(innerWidth, innerHeight) * 0.04);
+    box.style.width = box.style.height = `${d}px`;
+    box.style[REC.corner.includes('r') ? 'right' : 'left'] = `${m}px`;
+    box.style[REC.corner.includes('b') ? 'bottom' : 'top'] = `${m}px`;
+    box.style[REC.corner.includes('r') ? 'left' : 'right'] = 'auto';
+    box.style[REC.corner.includes('b') ? 'top' : 'bottom'] = 'auto';
+  }
   v.srcObject = stream;
   v.play().catch(() => {});
   box.hidden = false;
