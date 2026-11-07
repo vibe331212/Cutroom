@@ -50,33 +50,79 @@ function vibrato(ctx, osc, { t = 0, d = 1, rate = 6, depth = 10, decay = false }
 }
 const note = n => 440 * Math.pow(2, (n - 69) / 12);  // MIDI note number to pitch
 
-// A voice-like sound: a buzzy tone shaped by 3 filters that move like a mouth saying vowels.
-function voice(ctx, out, { t = 0, d = 1, f0 = 180, f0end = 150, vowels, vol = 0.5, vib = 5 }) {
-  const src = ctx.createOscillator();
-  src.type = 'sawtooth';
-  src.frequency.setValueAtTime(f0, t);
-  src.frequency.linearRampToValueAtTime(f0 * 1.15, t + d * 0.35);
-  src.frequency.linearRampToValueAtTime(f0end, t + d);
-  vibrato(ctx, src, { t, d, rate: 5.5, depth: vib });
-  const g = ctx.createGain();
-  g.gain.setValueAtTime(0.0001, t);
-  g.gain.exponentialRampToValueAtTime(vol, t + 0.06);
-  g.gain.setValueAtTime(vol, t + d * 0.7);
-  g.gain.exponentialRampToValueAtTime(0.0001, t + d);
-  [0, 1, 2].forEach(k => {
-    const bp = ctx.createBiquadFilter();
-    bp.type = 'bandpass'; bp.Q.value = [9, 11, 13][k];
-    vowels.forEach(([at, ...fs], i) => {
-      const time = t + at * d;
-      i ? bp.frequency.linearRampToValueAtTime(fs[k], time) : bp.frequency.setValueAtTime(fs[k], time);
-    });
-    const lvl = ctx.createGain(); lvl.gain.value = [1, 0.6, 0.3][k] * 3;
-    src.connect(bp).connect(lvl).connect(g);
-  });
-  g.connect(out);
-  src.start(t); src.stop(t + d + 0.05);
+// A voice made from scratch. A breathy, rich tone (like air buzzing through vocal cords) goes
+// through 4 filters that move like a mouth shaping vowels. "tract" sets the voice size:
+// 1 is a grown man, about 1.15 a woman, 1.3 a kid.
+const VOWEL = {
+  i: [270, 2290, 3010], y: [260, 2200, 3000], e: [530, 1840, 2480], a: [730, 1090, 2440],
+  o: [570, 840, 2410], u: [300, 870, 2240], w: [290, 610, 2150],
+};
+const waves = new WeakMap();
+function glottalWave(ctx) {
+  let w = waves.get(ctx);
+  if (!w) {
+    const n = 60, real = new Float32Array(n), imag = new Float32Array(n);
+    for (let k = 1; k < n; k++) imag[k] = 1 / Math.pow(k, 1.35);  // fewer high harmonics, like a real voice
+    w = ctx.createPeriodicWave(real, imag);
+    waves.set(ctx, w);
+  }
+  return w;
 }
-const W = [300, 650, 2300], A = [780, 1200, 2500], O = [450, 800, 2400], U = [330, 870, 2250], E = [550, 1850, 2550];
+function voice(ctx, out, { t = 0, d = 1, pitch, vowels, tract = 1.15, vol = 0.5, breath = 0.22, vib = 4 }) {
+  const src = ctx.createOscillator();
+  src.setPeriodicWave(glottalWave(ctx));
+  pitch.forEach(([at, f], i) => i ? src.frequency.linearRampToValueAtTime(f, t + at * d) : src.frequency.setValueAtTime(f, t));
+  // a little wobble so it is not robotic
+  const wob = ctx.createOscillator(), wobG = ctx.createGain();
+  wob.frequency.value = 5 + Math.random() * 1.5;
+  wobG.gain.setValueAtTime(0, t);
+  wobG.gain.linearRampToValueAtTime(vib, t + d * 0.5);
+  wob.connect(wobG).connect(src.frequency);
+  const jit = ctx.createBufferSource(), jitF = ctx.createBiquadFilter(), jitG = ctx.createGain();
+  jit.buffer = noiseBuffer(ctx); jit.loop = true; jitF.type = 'lowpass'; jitF.frequency.value = 18; jitG.gain.value = pitch[0][1] * 0.04;
+  jit.connect(jitF).connect(jitG).connect(src.frequency);
+
+  const amp = ctx.createGain();
+  amp.gain.setValueAtTime(0.0001, t);
+  amp.gain.exponentialRampToValueAtTime(vol, t + Math.min(0.07, d * 0.15));
+  amp.gain.setValueAtTime(vol, t + d * 0.72);
+  amp.gain.exponentialRampToValueAtTime(0.0001, t + d);
+  const voiced = ctx.createGain(); voiced.gain.value = 1;
+  src.connect(voiced);
+  // breath: soft noise through the same mouth shape, strongest at the start
+  const air = ctx.createBufferSource(), airG = ctx.createGain();
+  air.buffer = noiseBuffer(ctx); air.loop = true;
+  airG.gain.setValueAtTime(breath * 1.8, t);
+  airG.gain.linearRampToValueAtTime(breath * 0.6, t + d * 0.3);
+  air.connect(airG);
+  const mouth = ctx.createGain();
+  voiced.connect(mouth); airG.connect(mouth);
+  const widths = [90, 120, 180, 260], levels = [1, 0.6, 0.32, 0.14];
+  for (let k = 0; k < 4; k++) {
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    if (k === 3) bp.frequency.setValueAtTime(3500 * tract, t);
+    else vowels.forEach(([at, v], i) => {
+      const f = VOWEL[v][k] * tract, time = t + at * d;
+      i ? bp.frequency.linearRampToValueAtTime(f, time) : bp.frequency.setValueAtTime(f, time);
+    });
+    bp.Q.value = (k === 3 ? 3500 : VOWEL[vowels[0][1]][k]) * tract / widths[k];
+    const lvl = ctx.createGain(); lvl.gain.value = levels[k] * 5;
+    mouth.connect(bp).connect(lvl).connect(amp);
+  }
+  amp.connect(out);
+  const end = t + d + 0.05;
+  for (const n of [src, wob, jit, air]) { n.start(t); n.stop(end); }
+}
+// many different people at once
+function crowd(ctx, out, { d, n = 16, vowels, shape, breath = 0.35 }) {
+  for (let i = 0; i < n; i++) {
+    const tract = [1, 1.08, 1.15, 1.22, 1.3][i % 5], base = (tract > 1.12 ? 190 : 115) * (0.85 + Math.random() * 0.4);
+    const start = Math.random() * 0.25;
+    voice(ctx, out, { t: start, d: d - start - Math.random() * 0.2, tract, vol: 0.09, breath, vib: 6, vowels, pitch: shape.map(([at, k]) => [at, base * k * (0.95 + Math.random() * 0.1)]) });
+  }
+  noise(ctx, out, { d, vol: 0.05, f: 700, q: 0.5, a: 0.2 });  // background murmur
+}
 
 function clap(ctx, out, t, vol) {
   noise(ctx, out, { t, d: 0.03 + Math.random() * 0.03, vol, f: 1100 + Math.random() * 900, q: 0.8, a: 0.001 });
@@ -85,20 +131,16 @@ function clap(ctx, out, t, vol) {
 export const SOUND_GROUPS = ['Reactions', 'Cartoon', 'Transitions', 'Alerts', 'Music', 'Nature'];
 export const SOUNDS = [
   // ---------- Reactions
-  { id: 'wow', name: 'Wow', group: 'Reactions', dur: 1.1, make: (c, o) => voice(c, o, { d: 1.05, f0: 210, f0end: 160, vowels: [[0, ...W], [0.25, ...A], [0.75, ...A], [1, ...U]] }) },
-  { id: 'crowd-ooh', name: 'Crowd ooh', group: 'Reactions', dur: 1.8, make: (c, o) => {
-    for (let i = 0; i < 9; i++) voice(c, o, { t: Math.random() * 0.12, d: 1.6, f0: 130 + Math.random() * 140, f0end: 120 + Math.random() * 60, vowels: [[0, ...U], [0.5, ...O], [1, ...U]], vol: 0.12, vib: 8 });
-  } },
-  { id: 'crowd-aww', name: 'Crowd aww', group: 'Reactions', dur: 1.6, make: (c, o) => {
-    for (let i = 0; i < 9; i++) voice(c, o, { t: Math.random() * 0.1, d: 1.45, f0: 200 + Math.random() * 120, f0end: 130 + Math.random() * 40, vowels: [[0, ...A], [0.6, ...A], [1, ...W]], vol: 0.12, vib: 6 });
-  } },
-  { id: 'applause', name: 'Applause', group: 'Reactions', dur: 3, make: (c, o) => {
-    for (let i = 0; i < 380; i++) { const t = Math.random() * 2.8; clap(c, o, t, 0.35 * Math.min(1, t * 3) * (1 - t / 3.2)); }
-  } },
+  { id: 'wow', name: 'Wow', group: 'Reactions', dur: 1.1, make: (c, o) => voice(c, o, { d: 1.05, tract: 1.15, pitch: [[0, 210], [0.35, 330], [0.7, 280], [1, 170]], vowels: [[0, 'w'], [0.2, 'a'], [0.65, 'a'], [0.9, 'u'], [1, 'w']] }) },
+  { id: 'wow-deep', name: 'Wow (deep)', group: 'Reactions', dur: 1.1, make: (c, o) => voice(c, o, { d: 1.05, tract: 1, pitch: [[0, 115], [0.35, 180], [0.7, 150], [1, 98]], vowels: [[0, 'w'], [0.2, 'a'], [0.65, 'a'], [0.9, 'u'], [1, 'w']] }) },
+  { id: 'woah', name: 'Woah', group: 'Reactions', dur: 1.1, make: (c, o) => voice(c, o, { d: 1.05, tract: 1.15, pitch: [[0, 230], [0.3, 310], [1, 185]], vowels: [[0, 'w'], [0.18, 'o'], [0.55, 'a'], [1, 'a']] }) },
+  { id: 'yay', name: 'Yay (kid)', group: 'Reactions', dur: 0.9, make: (c, o) => voice(c, o, { d: 0.85, tract: 1.3, pitch: [[0, 300], [0.4, 440], [1, 380]], vowels: [[0, 'y'], [0.15, 'e'], [0.6, 'e'], [1, 'i']] }) },
+  { id: 'ooh', name: 'Ooh', group: 'Reactions', dur: 1.1, make: (c, o) => voice(c, o, { d: 1.05, tract: 1.15, breath: 0.32, pitch: [[0, 250], [0.45, 340], [1, 230]], vowels: [[0, 'u'], [0.5, 'o'], [1, 'u']] }) },
+  { id: 'crowd-ooh', name: 'Crowd ooh', group: 'Reactions', dur: 1.9, make: (c, o) => crowd(c, o, { d: 1.85, vowels: [[0, 'u'], [0.5, 'o'], [1, 'u']], shape: [[0, 1], [0.45, 1.35], [1, 0.95]] }) },
+  { id: 'crowd-aww', name: 'Crowd aww', group: 'Reactions', dur: 1.7, make: (c, o) => crowd(c, o, { d: 1.65, vowels: [[0, 'a'], [0.7, 'a'], [1, 'w']], shape: [[0, 1.3], [0.3, 1.35], [1, 0.85]] }) },
   { id: 'cheer', name: 'Cheer', group: 'Reactions', dur: 2.6, make: (c, o) => {
-    noise(c, o, { d: 2.5, vol: 0.25, f: 900, q: 0.6, a: 0.4 });
-    for (let i = 0; i < 8; i++) voice(c, o, { t: Math.random() * 0.4, d: 1.6 + Math.random() * 0.6, f0: 260 + Math.random() * 200, f0end: 300 + Math.random() * 150, vowels: [[0, ...E], [0.4, ...A], [1, ...A]], vol: 0.1, vib: 12 });
-    for (let i = 0; i < 160; i++) clap(c, o, 0.2 + Math.random() * 2.2, 0.2);
+    crowd(c, o, { d: 2.4, n: 14, breath: 0.45, vowels: [[0, 'y'], [0.15, 'e'], [0.6, 'a'], [1, 'a']], shape: [[0, 1.4], [0.3, 1.6], [1, 1.3]] });
+    for (let i = 0; i < 200; i++) clap(c, o, 0.15 + Math.random() * 2.3, 0.18);
   } },
   { id: 'gasp', name: 'Gasp', group: 'Reactions', dur: 0.7, make: (c, o) => noise(c, o, { d: 0.6, vol: 0.6, f: 700, f2: 2600, q: 2, a: 0.08 }) },
   { id: 'kiss', name: 'Kiss', group: 'Reactions', dur: 0.3, make: (c, o) => { tone(c, o, { f: 1400, f2: 2600, d: 0.09, vol: 0.4 }); noise(c, o, { t: 0.06, d: 0.05, vol: 0.4, f: 3000, q: 2 }); } },

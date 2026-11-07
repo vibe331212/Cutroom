@@ -4,7 +4,7 @@ import { initPhoto, Photo, FILTERS, applyFilter, findFaces } from './photo.js?v=
 import { VOICES, makeVoice, voiceName } from './voices.js?v=3';
 import { initAccount, settingsChanged, syncSaveButton } from './account.js?v=1';
 import { TextLayer, newText } from './text.js?v=1';
-import { SOUNDS, SOUND_GROUPS, soundOf, renderSound } from './sfx.js?v=1';
+import { SOUNDS, SOUND_GROUPS, soundOf, renderSound } from './sfx.js?v=2';
 
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -1018,19 +1018,42 @@ function drawTimeline() {
     }
   });
 
-  // sound effects: orange tags on the audio row
+  // sound effects: orange tags on the audio row (drag them to move)
   tx.font = '700 10px Inter, system-ui, sans-serif';
-  for (const e of S.sfx) {
-    const x = tX(e.at);
-    if (x < GUTTER - 80 || x > Wd) continue;
-    const label = soundOf(e.sound)?.name || 'Sound';
+  sfxRects = [];
+  const dragId = tlDrag?.mode === 'sfx' ? tlDrag.id : null;
+  const tag = (x, label, strong) => {
     const lw = Math.min(110, tx.measureText(label).width + 14);
-    tx.fillStyle = '#f97316';
+    tx.fillStyle = strong ? '#ea580c' : '#f97316';
+    if (strong) { tx.shadowColor = 'rgba(0,0,0,0.35)'; tx.shadowBlur = 8; tx.shadowOffsetY = 2; }
     rr(tx, x, ay + ah - 17, lw, 15, 7.5); tx.fill();
     tx.fillRect(x, ay + 2, 2, ah - 4);
+    tx.shadowColor = 'transparent';
     tx.save(); tx.beginPath(); tx.rect(x, ay, lw, ah); tx.clip();
     tx.fillStyle = '#fff'; tx.fillText(label, x + 7, ay + ah - 9.5);
     tx.restore();
+    return lw;
+  };
+  for (const e of S.sfx) {
+    const x = tX(e.at);
+    if (x < GUTTER - 120 || x > Wd) continue;
+    const lw = tag(x, soundOf(e.sound)?.name || 'Sound', e.id === dragId);
+    sfxRects.push({ id: e.id, x0: x - 4, x1: x + lw, y0: ay, y1: ay + ah });
+    if (e.id === dragId) {
+      // the time, right above the tag you are dragging
+      const label = fmt(e.at), w = tx.measureText(label).width + 12;
+      tx.fillStyle = '#ea580c'; rr(tx, x - w / 2, vy - 2, w, 16, 8); tx.fill();
+      tx.fillStyle = '#fff'; tx.fillText(label, x - w / 2 + 6, vy + 6.5);
+    }
+  }
+  if (sfxDrop) {
+    // where a sound dragged from the list will land
+    const x = tX(sfxDrop.at);
+    tx.globalAlpha = 0.85;
+    tx.strokeStyle = '#f97316'; tx.setLineDash([4, 3]); tx.lineWidth = 2;
+    tx.beginPath(); tx.moveTo(x, RULER); tx.lineTo(x, Hd); tx.stroke(); tx.setLineDash([]);
+    tag(x, soundOf(sfxDrop.sound)?.name || 'Sound', true);
+    tx.globalAlpha = 1;
   }
 
   // text bars (purple) along the top of the captions row
@@ -1114,10 +1137,31 @@ function tlTime(e) {
   const r = tl.getBoundingClientRect();
   return clamp(xT(e.clientX - r.left), 0, total());
 }
+// sound tags you can grab on the timeline
+let sfxRects = [];
+let sfxDrop = null;
+function sfxAtPoint(e) {
+  const r = tl.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
+  for (let i = sfxRects.length - 1; i >= 0; i--) {
+    const h = sfxRects[i];
+    if (x >= h.x0 && x <= h.x1 && y >= h.y0 && y <= h.y1) return h.id;
+  }
+  return null;
+}
+const rawTime = e => xT(e.clientX - tl.getBoundingClientRect().left);
+
 tl.addEventListener('pointerdown', e => {
   if (!S.segments.length || e.button !== 0) return;
   try { tl.setPointerCapture(e.pointerId); } catch {}
   const t = tlTime(e);
+  const hitId = !S.enterHeld && !e.shiftKey && sfxAtPoint(e);
+  if (hitId) {
+    const it = S.sfx.find(x => x.id === hitId);
+    tlDrag = { mode: 'sfx', id: hitId, grab: rawTime(e) - it.at, startX: e.clientX, moved: false, before: editState() };
+    tl.style.cursor = 'grabbing';
+    tlDirty = true;
+    return;
+  }
   if (S.enterHeld || e.shiftKey) {
     tlDrag = { mode: 'select', a: t };
     if (S.playing) pause();
@@ -1130,10 +1174,17 @@ tl.addEventListener('pointerdown', e => {
   }
 });
 tl.addEventListener('pointermove', e => {
-  if (!tlDrag) return;
+  if (!tlDrag) { tl.style.cursor = sfxAtPoint(e) ? 'grab' : ''; return; }
   const r = tl.getBoundingClientRect(), x = e.clientX - r.left;
   if (x > tlW - 30) { S.scroll += 12; clampScroll(); }
   else if (x < GUTTER + 10) { S.scroll -= 12; clampScroll(); }
+  if (tlDrag.mode === 'sfx') {
+    const it = S.sfx.find(x => x.id === tlDrag.id);
+    if (!it) return;
+    if (Math.abs(e.clientX - tlDrag.startX) > 3) tlDrag.moved = true;
+    if (tlDrag.moved) { it.at = clamp(rawTime(e) - tlDrag.grab, 0, Math.max(0, total() - 0.02)); tlDirty = true; }
+    return;
+  }
   const t = tlTime(e);
   if (tlDrag.mode === 'select') setSelection({ a: tlDrag.a, b: t });
   else seek(t);
@@ -1142,6 +1193,18 @@ const endTlDrag = () => {
   if (!tlDrag) return;
   const d = tlDrag;
   tlDrag = null;
+  if (d.mode === 'sfx') {
+    tl.style.cursor = 'grab';
+    const it = S.sfx.find(x => x.id === d.id);
+    if (d.moved) {
+      S.undo.push(d.before); S.redo = [];
+      S.sfx.sort((a, b) => a.at - b.at);
+      S.version++;
+      renderSfxList();
+    } else if (it) playSoundNow(it.sound, it.vol ?? 1);  // a click just plays it
+    tlDirty = true;
+    return;
+  }
   if (d.mode === 'select') {
     const sel = selRange();
     if (!sel || sel[1] - sel[0] < 0.03) setSelection(null);
@@ -2315,16 +2378,16 @@ function fireSfx() {
   sfxFrom = now;
 }
 
-function addSfx(id) {
+function addSfx(id, at = S.playhead) {
   if (!S.segments.length) { toast('Add a video first, then add sounds to it'); return; }
   snapshot();
-  S.sfx.push({ id: uid('fx'), sound: id, at: S.playhead, vol: 1 });
+  S.sfx.push({ id: uid('fx'), sound: id, at, vol: 1 });
   S.sfx.sort((a, b) => a.at - b.at);
   S.version++;
   tlDirty = true;
   renderSfxList();
   playSoundNow(id);
-  toast(`${soundOf(id).name} added at ${fmt(S.playhead, false)}`, 1600);
+  toast(`${soundOf(id).name} added at ${fmt(at, false)}. Drag its orange tag to move it.`, 2200);
 }
 
 function buildSoundsPanel() {
@@ -2336,9 +2399,46 @@ function buildSoundsPanel() {
         <span class="sound-name">${esc(s.name)}</span>
         <button class="sound-add" data-act="add" title="Add at the playhead"><svg class="i"><use href="#i-plus"/></svg></button>
       </div>`).join('')}</div>`).join('');
+  let cardDrag = null, justDragged = false;
+  $('#sound-groups').addEventListener('pointerdown', e => {
+    const card = e.target.closest('.sound-card');
+    if (!card || e.button !== 0) return;
+    cardDrag = { sound: card.dataset.sound, x: e.clientX, y: e.clientY, ghost: null };
+  });
+  addEventListener('pointermove', e => {
+    if (!cardDrag) return;
+    if (!cardDrag.ghost) {
+      if (Math.hypot(e.clientX - cardDrag.x, e.clientY - cardDrag.y) < 5) return;
+      const g = cardDrag.ghost = document.createElement('div');
+      g.className = 'sound-ghost';
+      g.textContent = soundOf(cardDrag.sound).name;
+      document.body.appendChild(g);
+      document.body.classList.add('dragging-sound');
+    }
+    cardDrag.ghost.style.transform = `translate(${e.clientX + 14}px, ${e.clientY + 10}px)`;
+    const r = tl.getBoundingClientRect();
+    const over = S.segments.length && e.clientX >= r.left + GUTTER && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+    cardDrag.ghost.classList.toggle('over', !!over);
+    sfxDrop = over ? { sound: cardDrag.sound, at: clamp(xT(e.clientX - r.left), 0, Math.max(0, total() - 0.02)) } : null;
+    tlDirty = true;
+  });
+  addEventListener('pointerup', () => {
+    if (!cardDrag) return;
+    const d = cardDrag;
+    cardDrag = null;
+    if (!d.ghost) return;
+    d.ghost.remove();
+    document.body.classList.remove('dragging-sound');
+    justDragged = true;
+    setTimeout(() => { justDragged = false; }, 0);
+    if (sfxDrop) addSfx(d.sound, sfxDrop.at);
+    else toast('Drop it on the timeline to add it', 1600);
+    sfxDrop = null;
+    tlDirty = true;
+  });
   $('#sound-groups').addEventListener('click', e => {
     const b = e.target.closest('[data-act]'), card = e.target.closest('.sound-card');
-    if (!card) return;
+    if (!card || justDragged) return;
     if (b?.dataset.act === 'add') addSfx(card.dataset.sound);
     else playSoundNow(card.dataset.sound);
   });
