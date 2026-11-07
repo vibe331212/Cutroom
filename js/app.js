@@ -1926,7 +1926,7 @@ async function hordeSubmit(prompt, n, source = null) {
       // start from an existing picture and only change it this much (0 = same, 1 = brand new)
       job.source_image = source;
       job.source_processing = 'img2img';
-      job.params.denoising_strength = 0.6;
+      job.params.denoising_strength = 0.72;
     }
     const res = await fetch(`${HORDE}/generate/async`, { method: 'POST', headers: HORDE_HEADERS, body: JSON.stringify(job) });
     const j = await res.json();
@@ -2067,7 +2067,8 @@ async function changeThumb(tile, change) {
   c.width = 1024; c.height = 576;
   c.getContext('2d').drawImage(tile._img, 0, 0, 1024, 576);
   const source = c.toDataURL('image/webp', 0.9).split(',')[1];
-  const prompt = `${tile._prompt}, ${change}`;
+  // the change goes first and a little stronger, so the AI pays most attention to it
+  const prompt = `(${change}:1.3), ${tile._prompt}`;
   tile.querySelectorAll('button').forEach(b => { b.disabled = true; });
   form.hidden = true;
   media.insertAdjacentHTML('beforeend', '<div class="thumb-state over"><div class="spinner"></div><span>Getting in line...</span></div>');
