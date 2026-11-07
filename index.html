@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Anton&family=Bangers&family=Bebas+Neue&family=Caveat:wght@700&family=Lobster&family=Pacifico&family=Permanent+Marker&family=Playfair+Display:wght@800&family=Press+Start+2P&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=25">
+<link rel="stylesheet" href="styles.css?v=29">
 </head>
 <body data-tone="light">
 <canvas id="scene" class="scene-bg"></canvas>
@@ -194,6 +194,7 @@
       <div class="voice-pick" id="sfx-voices"></div>
       <div class="pe-help">Sounds with a purple dot use this voice. Woman uses a real recording of a woman.</div>
       <div id="sound-groups"></div>
+      <input type="file" id="mysound-file" accept="audio/*" multiple hidden>
     </section>
 
     <section class="tab-panel" data-panel="effects">
@@ -573,6 +574,6 @@
 <div class="toast" id="toast"></div>
 <div class="media-pool" id="media-pool"></div>
 
-<script type="module" src="js/app.js?v=33"></script>
+<script type="module" src="js/app.js?v=34"></script>
 </body>
 </html>

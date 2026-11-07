@@ -2,9 +2,10 @@
 import { THEMES, Scene, findTheme, renderPreview } from './themes.js?v=4';
 import { initPhoto, Photo, FILTERS, applyFilter, findFaces } from './photo.js?v=18';
 import { VOICES, makeVoice, voiceName } from './voices.js?v=4';
-import { initAccount, settingsChanged, syncSaveButton } from './account.js?v=1';
+import { initAccount, settingsChanged, syncSaveButton } from './account.js?v=2';
 import { TextLayer, newText } from './text.js?v=1';
-import { SOUNDS, SOUND_GROUPS, VOICE_TYPES, soundOf, renderSound } from './sfx.js?v=4';
+import { SOUNDS, SOUND_GROUPS, VOICE_TYPES, soundOf, renderSound, addCustomSound, removeCustomSound } from './sfx.js?v=5';
+import { listMySounds, saveMySound, deleteMySound } from './mysounds.js?v=1';
 
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -2500,14 +2501,9 @@ function buildSoundsPanel() {
     $$('#sfx-voices button').forEach(x => x.classList.toggle('active', x === b));
     playSoundNow('v-congrats', 1, sfxVoice);  // a quick sample of the new voice
   });
-  $('#sound-groups').innerHTML = SOUND_GROUPS.map(g => `
-    <div class="field-label">${g}</div>
-    <div class="sound-grid">${SOUNDS.filter(s => s.group === g).map(s => `
-      <div class="sound-card" data-sound="${s.id}">
-        <button class="sound-play" data-act="hear" title="Hear it"><svg class="i"><use href="#i-play"/></svg></button>
-        <span class="sound-name">${esc(s.name)}${s.voice ? '<i class="voice-dot" title="Uses the voice type you pick"></i>' : ''}</span>
-        <button class="sound-add" data-act="add" title="Add at the playhead"><svg class="i"><use href="#i-plus"/></svg></button>
-      </div>`).join('')}</div>`).join('');
+  renderSoundGroups();
+  $('#mysound-file').onchange = e => { importMySounds(e.target.files); e.target.value = ''; };
+  loadMySounds();
   let cardDrag = null, justDragged = false;
   $('#sound-groups').addEventListener('pointerdown', e => {
     const card = e.target.closest('.sound-card');
@@ -2547,7 +2543,10 @@ function buildSoundsPanel() {
   });
   $('#sound-groups').addEventListener('click', e => {
     const b = e.target.closest('[data-act]'), card = e.target.closest('.sound-card');
-    if (!card || justDragged) return;
+    if (justDragged) return;
+    if (b?.dataset.act === 'import') { $('#mysound-file').click(); return; }
+    if (!card) return;
+    if (b?.dataset.act === 'remove') { removeMySound(card.dataset.sound); return; }
     if (b?.dataset.act === 'add') addSfx(card.dataset.sound);
     else playSoundNow(card.dataset.sound, 1, sfxVoice);
   });
@@ -2569,6 +2568,57 @@ function buildSoundsPanel() {
   });
   renderSfxList();
 }
+function renderSoundGroups() {
+  $('#sound-groups').innerHTML = SOUND_GROUPS.map(g => {
+    const list = SOUNDS.filter(s => s.group === g);
+    const mine = g === 'My sounds';
+    return `
+    <div class="field-label sound-group-label"><span>${g}</span>${mine ? '<button class="mini-btn" data-act="import"><svg class="i"><use href="#i-upload"/></svg>Import sounds</button>' : ''}</div>
+    ${mine && !list.length ? '<div class="mysounds-empty">Add your own sound files (MP3, WAV, M4A and more). Only use sounds you are allowed to, like ones from YouTube\'s free Audio Library.</div>' : ''}
+    <div class="sound-grid">${list.map(s => `
+      <div class="sound-card${mine ? ' mine' : ''}" data-sound="${s.id}">
+        <button class="sound-play" data-act="hear" title="Hear it"><svg class="i"><use href="#i-play"/></svg></button>
+        <span class="sound-name">${esc(s.name)}${s.voice ? '<i class="voice-dot" title="Uses the voice type you pick"></i>' : ''}</span>
+        ${mine ? '<button class="sound-remove" data-act="remove" title="Remove from My sounds"><svg class="i"><use href="#i-x"/></svg></button>' : ''}
+        <button class="sound-add" data-act="add" title="Add at the playhead"><svg class="i"><use href="#i-plus"/></svg></button>
+      </div>`).join('')}</div>`;
+  }).join('');
+}
+
+// ---------- My sounds: your own sound files, remembered in this browser
+const mySoundFiles = new Map();  // id -> File, for saving projects online
+function registerMySound(item) {
+  mySoundFiles.set(item.id, new File([item.blob], item.name, { type: item.type }));
+  addCustomSound({ id: item.id, name: item.name, url: URL.createObjectURL(item.blob) });
+}
+async function loadMySounds() {
+  for (const item of await listMySounds()) registerMySound(item);
+  renderSoundGroups();
+  renderSfxList();
+}
+async function importMySounds(files) {
+  let added = 0;
+  for (const f of files) {
+    if (!f.type.startsWith('audio/') && !AUDIO_EXT.test(f.name)) { toast(`${f.name} is not a sound file`); continue; }
+    if (f.size > 20 * 1048576) { toast(`${f.name} is bigger than 20 MB. Use a shorter sound.`); continue; }
+    const item = { id: `my-${crypto.randomUUID().slice(0, 8)}`, name: f.name.replace(/\.[^.]+$/, '').slice(0, 40), type: f.type || 'audio/mpeg', blob: f, added: Date.now() };
+    registerMySound(item);
+    try { await renderSound(item.id); }
+    catch { removeCustomSound(item.id); mySoundFiles.delete(item.id); toast(`Could not play ${f.name}. Try MP3 or WAV.`); continue; }
+    await saveMySound(item).catch(() => toast('Your browser would not save it for next time, but you can use it now'));
+    added++;
+  }
+  renderSoundGroups();
+  if (added) { toast(`${added} sound${added > 1 ? 's' : ''} added to My sounds`); playSoundNow(SOUNDS.find(s => s.custom).id); }
+}
+async function removeMySound(id) {
+  if (S.sfx.some(e => e.sound === id)) { toast('That sound is on your video. Remove it from your video first.', 3000); return; }
+  removeCustomSound(id);
+  mySoundFiles.delete(id);
+  await deleteMySound(id).catch(() => {});
+  renderSoundGroups();
+}
+
 function renderSfxList() {
   const box = $('#sfx-list');
   if (!box) return;
@@ -2629,13 +2679,17 @@ function projectSnapshot() {
   return {
     name: $('#project-name').value.trim() || 'Untitled project',
     thumb: thumb.toDataURL('image/jpeg', 0.7),
-    files: sources.map(src => ({ key: src.key, file: src.file })),
+    files: [
+      ...sources.map(src => ({ key: src.key, file: src.file })),
+      ...[...new Set(S.sfx.map(e => e.sound))].filter(id => mySoundFiles.has(id)).map(id => ({ key: `mysound-${id}`, file: mySoundFiles.get(id) })),
+    ],
     data: {
       version: 1,
       segments: S.segments,
       captions: S.captions,
       texts: S.texts,
       sfx: S.sfx,
+      mySounds: [...new Set(S.sfx.map(e => e.sound))].filter(id => mySoundFiles.has(id)).map(id => ({ id, key: `mysound-${id}`, name: soundOf(id).name, type: mySoundFiles.get(id).type })),
       sources: sources.map(src => ({
         id: src.id, key: src.key, name: src.name, fileName: src.file.name, type: src.file.type,
         kind: src.kind, duration: src.duration, words: src.words.map(({ text, t0, t1 }) => ({ text, t0, t1 })),
@@ -2659,6 +2713,13 @@ async function openSavedProject(row, files) {
   S.segments = (row.data.segments || []).filter(g => ids[g.src]).map(g => ({ ...g, id: uid('g'), src: ids[g.src] }));
   if (row.data.captions) { Object.assign(S.captions, row.data.captions); syncCaptionUI(); }
   S.texts = row.data.texts || [];
+  for (const m of row.data.mySounds || []) {
+    if (!files[m.key] || mySoundFiles.has(m.id)) continue;
+    const item = { id: m.id, name: m.name, type: m.type, blob: files[m.key], added: Date.now() };
+    registerMySound(item);
+    saveMySound(item).catch(() => {});
+  }
+  renderSoundGroups();
   S.sfx = row.data.sfx || [];
   renderSfxList();
   textLayer?.select(null);

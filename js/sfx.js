@@ -232,7 +232,7 @@ const MADE_SOUNDS = [
   { id: 'clock', name: 'Ticking clock', group: 'Nature', dur: 2.1, make: (c, o) => { for (let i = 0; i < 4; i++) { tone(c, o, { f: i % 2 ? 1400 : 1900, t: i * 0.5, d: 0.04, vol: 0.5 }); noise(c, o, { t: i * 0.5, d: 0.02, vol: 0.3, f: 3500, q: 3 }); } } },
 ];
 // real recordings first, then the made-from-scratch ones (for sounds Kenney does not have)
-export const SOUND_GROUPS = [...REAL_GROUPS, ...MADE.map(g => `Made in Cutroom: ${g}`)];
+export const SOUND_GROUPS = ['My sounds', ...REAL_GROUPS, ...MADE.map(g => `Made in Cutroom: ${g}`)];
 export const SOUNDS = [...REAL_SOUNDS, ...MADE_SOUNDS.map(s => ({ ...s, group: `Made in Cutroom: ${s.group}` }))];
 // Voice types you can pick for voice sounds. "Man" is the recording as it is.
 export const VOICE_TYPES = [
@@ -241,6 +241,16 @@ export const VOICE_TYPES = [
   { id: 'alien', name: 'Alien' }, { id: 'ghost', name: 'Ghost' },
 ];
 for (const s of SOUNDS) if (['wow', 'wow-deep', 'woah', 'yay', 'ooh', 'crowd-ooh', 'crowd-aww', 'cheer'].includes(s.id)) s.voice = true;
+
+// sounds you import yourself (see mysounds.js)
+export function addCustomSound({ id, name, url }) {
+  if (!SOUNDS.some(s => s.id === id)) SOUNDS.unshift({ id, name, group: 'My sounds', file: url, custom: true });
+}
+export function removeCustomSound(id) {
+  const i = SOUNDS.findIndex(s => s.id === id && s.custom);
+  if (i >= 0) { URL.revokeObjectURL(SOUNDS[i].file); SOUNDS.splice(i, 1); }
+  for (const k of [...cache.keys()]) if (k.startsWith(`${id}|`)) cache.delete(k);
+}
 
 export const soundOf = id => SOUNDS.find(s => s.id === id);
 

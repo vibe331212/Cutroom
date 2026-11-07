@@ -218,7 +218,7 @@ kbd {
 
 /* ---------- inspector */
 .inspector { grid-area: insp; display: flex; flex-direction: column; overflow: hidden; }
-.tabs { display: flex; gap: 2px; padding: 6px; margin: 8px 8px 0; background: var(--surface-2); border-radius: 13px; }
+.tabs { display: flex; gap: 2px; padding: 5px; margin: 8px 8px 0; background: var(--surface-2); border-radius: 13px; overflow: hidden; }
 .tab {
   flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 7px 0 6px; border: 0;
   border-radius: 9px; background: transparent; font-size: 11.5px; font-weight: 600; color: var(--muted);
@@ -227,7 +227,9 @@ kbd {
 .tab:hover { color: var(--text); }
 .tab.active { background: var(--surface-solid); color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,.1); }
 .tab.active .i { color: var(--accent); }
-.tab-panel { display: none; flex: 1; min-height: 0; overflow-y: auto; padding: 16px; flex-direction: column; gap: 10px; }
+.tab-panel { display: none; flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 16px; flex-direction: column; gap: 10px; container-type: inline-size; }
+/* narrow panel: one big sound per row so every name fits */
+@container (max-width: 360px) { .tab-panel .sound-grid { grid-template-columns: 1fr; } }
 .tab-panel.active { display: flex; }
 .tab-panel > * { flex-shrink: 0; }
 #th-prompt { min-height: 120px; }
@@ -529,7 +531,7 @@ body:not(.photo-empty) .ph-empty { display: none; }
 .mix-clear:hover { color: var(--text); background: var(--surface-3); }
 .fx-target { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-radius: 11px; background: var(--surface-2); font-size: 12.5px; line-height: 1.45; }
 .fx-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); flex: none; }
-.tab { font-size: 11px; }
+.tab { font-size: 11px; min-width: 0; padding-left: 2px; padding-right: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .mix-list { font-size: 12.5px; font-weight: 600; line-height: 1.45; }
 .amount { padding: 4px 0; }
 .cam-view { position: relative; aspect-ratio: 16 / 9; border-radius: 14px; overflow: hidden; background: #000; }
@@ -549,6 +551,14 @@ body:not(.photo-empty) .ph-empty { display: none; }
 }
 
 /* sound effects */
+.sound-group-label { align-items: center; }
+.mini-btn { display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 10px; border-radius: 8px; border: 0; background: #f97316; color: #fff; font: 700 11.5px var(--font); text-transform: none; letter-spacing: 0; }
+.mini-btn .i { width: 13px; height: 13px; }
+.mini-btn:hover { filter: brightness(1.08); }
+.mysounds-empty { font-size: 12px; color: var(--muted); line-height: 1.5; padding: 10px 12px; border-radius: 11px; border: 1.5px dashed var(--line); }
+.sound-remove { width: 24px; height: 24px; flex: none; border: 0; border-radius: 7px; display: grid; place-items: center; background: transparent; color: var(--faint); }
+.sound-remove .i { width: 12px; height: 12px; }
+.sound-remove:hover { background: var(--surface-3); color: var(--danger); }
 .voice-pick { display: flex; flex-wrap: wrap; gap: 5px; }
 .voice-pick button { padding: 5px 11px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface-solid); font-size: 12px; font-weight: 600; color: var(--muted); }
 .voice-pick button:hover { color: var(--text); }
@@ -558,12 +568,12 @@ body:not(.photo-empty) .ph-empty { display: none; }
 body.dragging-sound, body.dragging-sound * { cursor: grabbing !important; user-select: none; }
 .sound-ghost { position: fixed; left: 0; top: 0; z-index: 90; pointer-events: none; padding: 6px 12px; border-radius: 999px; background: #f97316; color: #fff; font-weight: 700; font-size: 12px; box-shadow: 0 10px 26px rgba(0,0,0,.3); opacity: .85; transition: opacity .12s, scale .12s; }
 .sound-ghost.over { opacity: 1; scale: 1.06; }
-.sound-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
-.sound-card { display: flex; align-items: center; gap: 4px; padding: 3px; border-radius: 10px; background: var(--surface-2); cursor: pointer; border: 1px solid transparent; }
+.sound-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
+.sound-card { display: flex; align-items: center; gap: 6px; min-width: 0; min-height: 46px; padding: 5px 5px 5px 6px; border-radius: 12px; background: var(--surface-2); cursor: pointer; border: 1px solid transparent; }
 .sound-card:hover { border-color: #f97316; background: var(--surface-solid); }
-.sound-name { flex: 1; min-width: 0; font-size: 12px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.sound-play, .sound-add { width: 26px; height: 26px; flex: none; border: 0; border-radius: 8px; display: grid; place-items: center; background: transparent; color: var(--muted); }
-.sound-play .i, .sound-add .i { width: 13px; height: 13px; }
+.sound-name { flex: 1; min-width: 0; font-size: 13px; font-weight: 600; line-height: 1.2; overflow-wrap: break-word; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.sound-play, .sound-add { width: 32px; height: 32px; flex: none; border: 0; border-radius: 8px; display: grid; place-items: center; background: transparent; color: var(--muted); }
+.sound-play .i, .sound-add .i { width: 15px; height: 15px; }
 .sound-play { color: #f97316; }
 .sound-add { background: #f97316; color: #fff; }
 .sound-add:hover { filter: brightness(1.1); }
@@ -697,8 +707,8 @@ body.dragging-sound, body.dragging-sound * { cursor: grabbing !important; user-s
 ::-webkit-scrollbar-thumb { background: var(--surface-3); border-radius: 10px; border: 3px solid transparent; background-clip: padding-box; }
 
 @media (max-width: 1180px) {
-  .app { grid-template-columns: 230px minmax(0, 1fr) 300px; }
-  body.photo-mode .photo-view { grid-template-columns: 230px minmax(0, 1fr); }
+  .app { grid-template-columns: 205px minmax(0, 1fr) 335px; }
+  body.photo-mode .photo-view { grid-template-columns: 205px minmax(0, 1fr); }
   .filter-card .fc-name { font-size: 10.5px; padding: 5px 2px 6px; }
   .ph-left { padding: 14px; }
   .ph-scroll { padding: 14px; }

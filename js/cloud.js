@@ -152,7 +152,7 @@ export async function loadProject(id, onProgress) {
   const s = await client();
   const row = check(await s.from('projects').select('*').eq('id', id).single());
   const files = {};
-  const list = row.data.sources || [];
+  const list = [...(row.data.sources || []), ...(row.data.mySounds || [])];
   let done = 0;
   for (const src of list) {
     const blob = check(await s.storage.from(BUCKET).download(`${me.id}/${id}/${src.key}`));

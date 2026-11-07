@@ -1,5 +1,5 @@
 // Account screens: sign in, create an account, sign out, and save or open projects online.
-import * as Cloud from './cloud.js?v=1';
+import * as Cloud from './cloud.js?v=2';
 
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
