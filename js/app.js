@@ -1,10 +1,10 @@
 // Cutroom: a browser video editor. Plain JavaScript modules, no build step.
 import { THEMES, Scene, findTheme, renderPreview } from './themes.js?v=4';
 import { initPhoto, Photo, FILTERS, applyFilter, findFaces } from './photo.js?v=18';
-import { VOICES, makeVoice, voiceName } from './voices.js?v=3';
+import { VOICES, makeVoice, voiceName } from './voices.js?v=4';
 import { initAccount, settingsChanged, syncSaveButton } from './account.js?v=1';
 import { TextLayer, newText } from './text.js?v=1';
-import { SOUNDS, SOUND_GROUPS, soundOf, renderSound } from './sfx.js?v=3';
+import { SOUNDS, SOUND_GROUPS, VOICE_TYPES, soundOf, renderSound } from './sfx.js?v=4';
 
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -1201,7 +1201,7 @@ const endTlDrag = () => {
       S.sfx.sort((a, b) => a.at - b.at);
       S.version++;
       renderSfxList();
-    } else if (it) playSoundNow(it.sound, it.vol ?? 1);  // a click just plays it
+    } else if (it) playSoundNow(it.sound, it.vol ?? 1, it.voice);  // a click just plays it
     tlDirty = true;
     return;
   }
@@ -2453,9 +2453,11 @@ function setView(v) {
 let sfxFrom = 0;              // where the playhead was last time we checked
 const sfxPlaying = new Set();
 
-async function playSoundNow(id, vol = 1) {
+let sfxVoice = 'man';  // the voice type picked in the Sounds tab
+const voiceTypeName = v => (VOICE_TYPES.find(t => t.id === v) || VOICE_TYPES[0]).name;
+async function playSoundNow(id, vol = 1, voice = 'man') {
   ensureAudio();
-  const buf = await renderSound(id);
+  const buf = await renderSound(id, voice);
   const src = actx.createBufferSource(), g = actx.createGain();
   src.buffer = buf;
   g.gain.value = vol;
@@ -2472,29 +2474,38 @@ function stopSfx() {
 function fireSfx() {
   const now = S.playhead;
   if (now < sfxFrom || now - sfxFrom > 0.5) { sfxFrom = now; return; }  // a jump, not normal playing
-  for (const e of S.sfx) if (e.at > sfxFrom && e.at <= now) playSoundNow(e.sound, e.vol ?? 1);
+  for (const e of S.sfx) if (e.at > sfxFrom && e.at <= now) playSoundNow(e.sound, e.vol ?? 1, e.voice);
   sfxFrom = now;
 }
 
 function addSfx(id, at = S.playhead) {
   if (!S.segments.length) { toast('Add a video first, then add sounds to it'); return; }
   snapshot();
-  S.sfx.push({ id: uid('fx'), sound: id, at, vol: 1 });
+  const voice = soundOf(id).voice ? sfxVoice : undefined;
+  S.sfx.push({ id: uid('fx'), sound: id, at, vol: 1, ...(voice ? { voice } : {}) });
   S.sfx.sort((a, b) => a.at - b.at);
   S.version++;
   tlDirty = true;
   renderSfxList();
-  playSoundNow(id);
-  toast(`${soundOf(id).name} added at ${fmt(at, false)}. Drag its orange tag to move it.`, 2200);
+  playSoundNow(id, 1, voice);
+  toast(`${soundOf(id).name}${voice && voice !== 'man' ? ` (${voiceTypeName(voice)})` : ''} added at ${fmt(at, false)}. Drag its orange tag to move it.`, 2200);
 }
 
 function buildSoundsPanel() {
+  $('#sfx-voices').innerHTML = VOICE_TYPES.map(v => `<button data-voice="${v.id}" class="${v.id === sfxVoice ? 'active' : ''}">${v.name}</button>`).join('');
+  $('#sfx-voices').addEventListener('click', e => {
+    const b = e.target.closest('[data-voice]');
+    if (!b) return;
+    sfxVoice = b.dataset.voice;
+    $$('#sfx-voices button').forEach(x => x.classList.toggle('active', x === b));
+    playSoundNow('v-congrats', 1, sfxVoice);  // a quick sample of the new voice
+  });
   $('#sound-groups').innerHTML = SOUND_GROUPS.map(g => `
     <div class="field-label">${g}</div>
     <div class="sound-grid">${SOUNDS.filter(s => s.group === g).map(s => `
       <div class="sound-card" data-sound="${s.id}">
         <button class="sound-play" data-act="hear" title="Hear it"><svg class="i"><use href="#i-play"/></svg></button>
-        <span class="sound-name">${esc(s.name)}</span>
+        <span class="sound-name">${esc(s.name)}${s.voice ? '<i class="voice-dot" title="Uses the voice type you pick"></i>' : ''}</span>
         <button class="sound-add" data-act="add" title="Add at the playhead"><svg class="i"><use href="#i-plus"/></svg></button>
       </div>`).join('')}</div>`).join('');
   let cardDrag = null, justDragged = false;
@@ -2538,14 +2549,14 @@ function buildSoundsPanel() {
     const b = e.target.closest('[data-act]'), card = e.target.closest('.sound-card');
     if (!card || justDragged) return;
     if (b?.dataset.act === 'add') addSfx(card.dataset.sound);
-    else playSoundNow(card.dataset.sound);
+    else playSoundNow(card.dataset.sound, 1, sfxVoice);
   });
   $('#sfx-list').addEventListener('click', e => {
     const row = e.target.closest('[data-id]'), b = e.target.closest('[data-act]');
     if (!row || !b) return;
     const it = S.sfx.find(x => x.id === row.dataset.id);
     if (!it) return;
-    if (b.dataset.act === 'hear') { seek(it.at); playSoundNow(it.sound, it.vol); return; }
+    if (b.dataset.act === 'hear') { seek(it.at); playSoundNow(it.sound, it.vol, it.voice); return; }
     snapshot();
     if (b.dataset.act === 'move') { it.at = S.playhead; S.sfx.sort((a, c) => a.at - c.at); }
     if (b.dataset.act === 'del') S.sfx = S.sfx.filter(x => x !== it);
@@ -2565,7 +2576,7 @@ function renderSfxList() {
   box.innerHTML = S.sfx.map(e => `
     <div class="sfx-row" data-id="${e.id}">
       <button class="icon-btn sm" data-act="hear" title="Jump there and hear it"><svg class="i"><use href="#i-play"/></svg></button>
-      <div class="sfx-meta"><b>${esc(soundOf(e.sound)?.name || 'Sound')}</b><span>at ${fmt(e.at)}</span></div>
+      <div class="sfx-meta"><b>${esc(soundOf(e.sound)?.name || 'Sound')}${e.voice && e.voice !== 'man' ? ` (${voiceTypeName(e.voice)})` : ''}</b><span>at ${fmt(e.at)}</span></div>
       <input type="range" min="0" max="1.5" step="0.05" value="${e.vol ?? 1}" title="Volume" aria-label="Volume">
       <button class="icon-btn sm" data-act="move" title="Move to the playhead"><svg class="i"><use href="#i-start"/></svg></button>
       <button class="icon-btn sm" data-act="del" title="Remove"><svg class="i"><use href="#i-trash"/></svg></button>

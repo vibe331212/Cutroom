@@ -4,6 +4,8 @@
 export const VOICES = [
   { id: 'normal', name: 'Normal', desc: 'Your real voice' },
   { id: 'robot', name: 'Robot', desc: 'Metal and buzzing' },
+  { id: 'woman', name: 'Woman', desc: 'Higher and lighter' },
+  { id: 'kid', name: 'Kid', desc: 'Young and high' },
   { id: 'chipmunk', name: 'Chipmunk', desc: 'High and squeaky' },
   { id: 'deep', name: 'Deep voice', desc: 'Low and big' },
   { id: 'monster', name: 'Monster', desc: 'Very low and growly' },
@@ -98,6 +100,19 @@ export function makeVoice(ctx, id) {
       const mix = gain(ctx, 1.6);
       ring.connect(mix); comb.connect(mix);
       series([mix, filter(ctx, 'highpass', 180), output]);
+      break;
+    }
+    case 'woman': {
+      const p = withPitch(1.28);
+      input.connect(p.input);
+      const air = filter(ctx, 'highshelf', 3500, 0.7); air.gain.value = 3;
+      series([p.output, filter(ctx, 'highpass', 140), air, output]);
+      break;
+    }
+    case 'kid': {
+      const p = withPitch(1.55);
+      input.connect(p.input);
+      series([p.output, filter(ctx, 'highpass', 260), filter(ctx, 'lowpass', 7000), output]);
       break;
     }
     case 'chipmunk': { const p = withPitch(1.7); input.connect(p.input); series([p.output, filter(ctx, 'highpass', 200), output]); break; }

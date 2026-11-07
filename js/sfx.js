@@ -1,6 +1,7 @@
 // Sound effects. Real recordings come from Kenney (CC0, see sounds-real.js); the rest are made
 // from scratch with Web Audio. Each sound is loaded once, then played on the timeline and in exports.
-import { REAL_SOUNDS, REAL_GROUPS } from './sounds-real.js?v=1';
+import { REAL_SOUNDS, REAL_GROUPS } from './sounds-real.js?v=2';
+import { makeVoice } from './voices.js?v=4';
 
 const SR = 44100;
 const noiseCache = new WeakMap();
@@ -233,15 +234,41 @@ const MADE_SOUNDS = [
 // real recordings first, then the made-from-scratch ones (for sounds Kenney does not have)
 export const SOUND_GROUPS = [...REAL_GROUPS, ...MADE.map(g => `Made in Cutroom: ${g}`)];
 export const SOUNDS = [...REAL_SOUNDS, ...MADE_SOUNDS.map(s => ({ ...s, group: `Made in Cutroom: ${s.group}` }))];
+// Voice types you can pick for voice sounds. "Man" is the recording as it is.
+export const VOICE_TYPES = [
+  { id: 'man', name: 'Man' }, { id: 'woman', name: 'Woman' }, { id: 'kid', name: 'Kid' }, { id: 'deep', name: 'Deep' },
+  { id: 'robot', name: 'Robot' }, { id: 'chipmunk', name: 'Chipmunk' }, { id: 'monster', name: 'Monster' },
+  { id: 'alien', name: 'Alien' }, { id: 'ghost', name: 'Ghost' },
+];
+for (const s of SOUNDS) if (['wow', 'wow-deep', 'woah', 'yay', 'ooh', 'crowd-ooh', 'crowd-aww', 'cheer'].includes(s.id)) s.voice = true;
+
 export const soundOf = id => SOUNDS.find(s => s.id === id);
 
 const cache = new Map();
 // Builds a sound once (in a quick offline render) and remembers it.
-export function renderSound(id) {
-  if (!cache.has(id)) {
-    const s = soundOf(id);
+// Voice sounds can be made in another voice type (see VOICE_TYPES).
+export function renderSound(id, voice = 'man') {
+  const s = soundOf(id);
+  if (!s.voice) voice = 'man';
+  const key = `${id}|${voice}`;
+  if (!cache.has(key)) {
     let made;
-    if (s.file) {
+    if (voice === 'woman' && s.woman) {
+      // Kenney recorded a real woman saying it too
+      made = fetch(s.woman).then(r => r.arrayBuffer()).then(b => new OfflineAudioContext(2, 1, SR).decodeAudioData(b));
+    } else if (voice !== 'man') {
+      // run the plain version through the voice changer
+      made = renderSound(id, 'man').then(buf => {
+        const tail = ['ghost', 'monster'].includes(voice) ? 1.2 : 0.25;
+        const ctx = new OfflineAudioContext(2, Math.ceil((buf.duration + tail) * SR), SR);
+        const src = ctx.createBufferSource(), chain = makeVoice(ctx, voice);
+        src.buffer = buf;
+        src.connect(chain.input);
+        chain.output.connect(ctx.destination);
+        src.start(0.02);
+        return ctx.startRendering();
+      });
+    } else if (s.file) {
       // a real recording: load the file and decode it
       made = fetch(s.file).then(r => r.arrayBuffer()).then(b => new OfflineAudioContext(2, 1, SR).decodeAudioData(b));
     } else {
@@ -251,7 +278,7 @@ export function renderSound(id) {
       s.make(ctx, out);
       made = ctx.startRendering();
     }
-    cache.set(id, made.then(buf => {
+    cache.set(key, made.then(buf => {
       // make every sound about as loud as the others
       let peak = 0;
       for (let c = 0; c < buf.numberOfChannels; c++) for (const v of buf.getChannelData(c)) peak = Math.max(peak, Math.abs(v));
@@ -259,5 +286,5 @@ export function renderSound(id) {
       return buf;
     }));
   }
-  return cache.get(id);
+  return cache.get(key);
 }

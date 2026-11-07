@@ -549,6 +549,11 @@ body:not(.photo-empty) .ph-empty { display: none; }
 }
 
 /* sound effects */
+.voice-pick { display: flex; flex-wrap: wrap; gap: 5px; }
+.voice-pick button { padding: 5px 11px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface-solid); font-size: 12px; font-weight: 600; color: var(--muted); }
+.voice-pick button:hover { color: var(--text); }
+.voice-pick button.active { background: #7c3aed; border-color: #7c3aed; color: #fff; }
+.voice-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #7c3aed; margin-left: 6px; vertical-align: 1px; }
 .sound-card { user-select: none; -webkit-user-select: none; touch-action: none; }
 body.dragging-sound, body.dragging-sound * { cursor: grabbing !important; user-select: none; }
 .sound-ghost { position: fixed; left: 0; top: 0; z-index: 90; pointer-events: none; padding: 6px 12px; border-radius: 999px; background: #f97316; color: #fff; font-weight: 700; font-size: 12px; box-shadow: 0 10px 26px rgba(0,0,0,.3); opacity: .85; transition: opacity .12s, scale .12s; }
