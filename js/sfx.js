@@ -1,7 +1,7 @@
 // Sound effects. Real recordings come from Kenney (CC0, see sounds-real.js); the rest are made
 // from scratch with Web Audio. Each sound is loaded once, then played on the timeline and in exports.
 import { REAL_SOUNDS, REAL_GROUPS } from './sounds-real.js?v=2';
-import { makeVoice } from './voices.js?v=4';
+import { makeVoice } from './voices.js?v=5';
 
 const SR = 44100;
 const noiseCache = new WeakMap();

@@ -17,7 +17,21 @@ export const VOICES = [
   { id: 'underwater', name: 'Underwater', desc: 'Muffled bubbles' },
   { id: 'ghost', name: 'Ghost', desc: 'Spooky and airy' },
 ];
-export const voiceName = id => (VOICES.find(v => v.id === id) || VOICES[0]).name;
+// Your own voice, just higher or lower. The number is how many musical steps it moves.
+export const PITCHES = [
+  { id: 'up-1', name: 'A little high', desc: 'Barely higher', steps: 2 },
+  { id: 'up-2', name: 'High', desc: 'Clearly higher', steps: 4 },
+  { id: 'up-3', name: 'Higher', desc: 'Quite high', steps: 6 },
+  { id: 'up-4', name: 'Very high', desc: 'Like a cartoon', steps: 9 },
+  { id: 'up-5', name: 'Super high', desc: 'As high as it goes', steps: 12 },
+  { id: 'down-1', name: 'A little low', desc: 'Barely lower', steps: -2 },
+  { id: 'down-2', name: 'Low', desc: 'Clearly lower', steps: -4 },
+  { id: 'down-3', name: 'Lower', desc: 'Quite low', steps: -6 },
+  { id: 'down-4', name: 'Very low', desc: 'Like a giant', steps: -9 },
+  { id: 'down-5', name: 'Super low', desc: 'As low as it goes', steps: -12 },
+];
+const pitchOf = id => PITCHES.find(p => p.id === id);
+export const voiceName = id => pitchOf(id)?.name || (VOICES.find(v => v.id === id) || VOICES[0]).name;
 
 // Changes pitch without changing speed: two delay lines whose delay slides like a saw,
 // crossfaded so you never hear the jump when the slide restarts.
@@ -89,7 +103,12 @@ export function makeVoice(ctx, id) {
   const link = (from, to) => { from.connect(to); return to; };
   const withPitch = ratio => { const p = pitchShift(ctx, ratio); sources.push(...p.sources); return p; };
 
-  switch (id) {
+  const pitched = pitchOf(id);
+  if (pitched) {
+    const p = withPitch(2 ** (pitched.steps / 12));
+    input.connect(p.input);
+    p.output.connect(output);
+  } else switch (id) {
     case 'robot': {
       // ring modulation (multiplying by a buzzing tone) plus a short metallic echo
       const ring = gain(ctx, 0);

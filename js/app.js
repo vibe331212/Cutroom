@@ -1,10 +1,11 @@
 // Cutroom: a browser video editor. Plain JavaScript modules, no build step.
 import { THEMES, Scene, findTheme, renderPreview } from './themes.js?v=4';
 import { initPhoto, Photo, FILTERS, applyFilter, findFaces, keepAwake } from './photo.js?v=19';
-import { VOICES, makeVoice, voiceName } from './voices.js?v=4';
+import { VOICES, PITCHES, makeVoice, voiceName } from './voices.js?v=5';
+import { BACKGROUNDS, FRAMES, drawBackground, frameOf, frameArea, drawFrame, lookPicture } from './looks.js?v=1';
 import { initAccount, settingsChanged, syncSaveButton } from './account.js?v=2';
 import { TextLayer, newText } from './text.js?v=1';
-import { SOUNDS, SOUND_GROUPS, VOICE_TYPES, soundOf, renderSound, addCustomSound, removeCustomSound, addOnlineSound } from './sfx.js?v=7';
+import { SOUNDS, SOUND_GROUPS, VOICE_TYPES, soundOf, renderSound, addCustomSound, removeCustomSound, addOnlineSound } from './sfx.js?v=8';
 import { listMySounds, saveMySound, deleteMySound } from './mysounds.js?v=1';
 
 const $ = (s, r = document) => r.querySelector(s);
@@ -41,6 +42,7 @@ const S = {
   enterHeld: false,
   theme: 'forest',
   framed: true,
+  look: { bg: 'none', frame: 'none' },  // the background and frame on the whole video
   captions: { on: true, style: 'pop', pos: 'bottom', size: 1, color: '' },
   exporting: null,
   version: 0,
@@ -399,7 +401,7 @@ function locate(t) {
   return null;
 }
 
-const editState = () => JSON.stringify({ g: S.segments, t: S.texts, s: S.sfx });
+const editState = () => JSON.stringify({ g: S.segments, t: S.texts, s: S.sfx, l: S.look });
 function snapshot() {
   S.undo.push(editState());
   if (S.undo.length > 200) S.undo.shift();
@@ -408,7 +410,7 @@ function snapshot() {
 function restore(json) {
   const d = JSON.parse(json);
   S.segments = (Array.isArray(d) ? d : d.g).filter(s => S.sources.has(s.src));
-  if (!Array.isArray(d)) { S.texts = d.t || []; S.sfx = d.s || []; renderSfxList(); }
+  if (!Array.isArray(d)) { S.texts = d.t || []; S.sfx = d.s || []; S.look = d.l || { bg: 'none', frame: 'none' }; renderSfxList(); syncLookPanel(); }
   textLayer?.syncPanel();
   setSelection(null);
   afterEdit();
@@ -644,28 +646,28 @@ function rr(c, x, y, w, h, r) { c.beginPath(); c.roundRect(x, y, w, h, r); }
 
 function draw(dt) {
   cx.setTransform(1, 0, 0, 1, 0, 0);
-  const framed = S.framed;
-  if (framed) {
+  const L = S.segments.length ? locate(S.playhead) : null;
+  const src = L ? S.sources.get(L.seg.src) : null;
+  const hasBg = S.look.bg !== 'none', framed = S.framed || hasBg;
+  if (hasBg) drawBackground(cx, S.look.bg, W, H, src?.kind === 'video' ? src.el : null);
+  else if (framed) {
     backdrop.step(dt);
     cx.drawImage(backdrop.canvas, 0, 0, W, H);
   } else {
     cx.fillStyle = '#000';
     cx.fillRect(0, 0, W, H);
   }
-  const L = S.segments.length ? locate(S.playhead) : null;
-  if (!L) return;
-  const src = S.sources.get(L.seg.src);
-  if (!src) return;
+  if (!L || !src) return;
 
   const pad = framed ? 0.075 : 0;
-  const area = { x: W * pad, y: H * pad, w: W * (1 - 2 * pad), h: H * (1 - 2 * pad) };
+  const area = frameArea({ x: W * pad, y: H * pad, w: W * (1 - 2 * pad), h: H * (1 - 2 * pad) }, S.look.frame);
   let capArea = area;
 
   if (src.kind === 'video') {
     const ar = src.w / src.h;
     let w = area.w, h = w / ar;
     if (h > area.h) { h = area.h; w = h * ar; }
-    const x = area.x + (area.w - w) / 2, y = area.y + (area.h - h) / 2, r = framed ? 26 : 0;
+    const x = area.x + (area.w - w) / 2, y = area.y + (area.h - h) / 2, r = framed && S.look.frame === 'none' ? 26 : 0;
     if (framed) {
       cx.save();
       cx.shadowColor = 'rgba(0,0,0,0.42)'; cx.shadowBlur = 60; cx.shadowOffsetY = 22;
@@ -678,8 +680,10 @@ function draw(dt) {
     if (src.el.readyState >= 2) cx.drawImage(L.seg.fx?.length ? fxFrame(src, L.seg) : src.el, x, y, w, h);
     cx.restore();
     capArea = { x, y, w, h };
+    drawFrame(cx, S.look.frame, capArea, S.playhead, area.u);
   } else {
     drawAudioCard(src, L.srcT, area, framed);
+    drawFrame(cx, S.look.frame, area, S.playhead, area.u);
   }
   if (S.captions.on) drawCaptions(L, src, capArea);
   textLayer?.draw(cx, W, H);
@@ -2469,7 +2473,8 @@ function syncFxPanel() {
   fxPanelKey = key;
   $('#fx-target').innerHTML = !t ? 'Add a video to the timeline to use filters.'
     : `<span class="fx-dot"></span><span>Changing <b>${t.sel ? 'your selection' : 'the part under the playhead'}</b>, ${fmt(t.a, false)} to ${fmt(t.b, false)}</span>`;
-  $$('#voice-grid .voice-card').forEach(c => c.classList.toggle('active', c.dataset.voice === (seg?.voice || 'normal')));
+  $$('#voice-grid .voice-card, #pitch-grid .voice-card').forEach(c => c.classList.toggle('active', c.dataset.voice === (seg?.voice || 'normal')));
+  $('#pitch-target').innerHTML = $('#fx-target').innerHTML;
   $$('#vfx-grid .filter-card').forEach(c => {
     const n = fx.indexOf(c.dataset.filter);
     c.classList.toggle('active', c.dataset.filter === 'original' ? !fx.length : n >= 0);
@@ -2508,6 +2513,9 @@ function buildFxPanel() {
   $('#voice-grid').innerHTML = VOICES.map(v => `
     <button class="voice-card" data-voice="${v.id}"><b>${esc(v.name)}</b><span>${esc(v.desc)}</span></button>`).join('');
   $('#voice-grid').addEventListener('click', e => { const c = e.target.closest('.voice-card'); if (c) pickVoice(c.dataset.voice); });
+  $('#pitch-grid').innerHTML = [{ id: 'normal', name: 'Normal', desc: 'Your real voice' }, ...PITCHES].map(v => `
+    <button class="voice-card" data-voice="${v.id}"><b>${esc(v.name)}</b><span>${esc(v.desc)}</span></button>`).join('');
+  $('#pitch-grid').addEventListener('click', e => { const c = e.target.closest('.voice-card'); if (c) pickVoice(c.dataset.voice); });
   $('#vfx-grid').innerHTML = FILTERS.map(f => `
     <button class="filter-card" data-filter="${f.id}">
       <div class="fc-img"><svg class="i"><use href="#i-${f.kind === 'face' ? 'face' : 'image'}"/></svg></div>
@@ -3045,6 +3053,7 @@ function projectSnapshot() {
       captions: S.captions,
       texts: S.texts,
       sfx: S.sfx,
+      look: S.look,
       mySounds: [...new Set(S.sfx.map(e => e.sound))].filter(id => mySoundFiles.has(id)).map(id => ({ id, key: `mysound-${id}`, name: soundOf(id).name, type: mySoundFiles.get(id).type })),
       sources: sources.map(src => ({
         id: src.id, key: src.key, name: src.name, fileName: src.file.name, type: src.file.type,
@@ -3069,6 +3078,8 @@ async function openSavedProject(row, files) {
   S.segments = (row.data.segments || []).filter(g => ids[g.src]).map(g => ({ ...g, id: uid('g'), src: ids[g.src] }));
   if (row.data.captions) { Object.assign(S.captions, row.data.captions); syncCaptionUI(); }
   S.texts = row.data.texts || [];
+  S.look = row.data.look || { bg: 'none', frame: 'none' };
+  syncLookPanel();
   for (const m of row.data.mySounds || []) {
     if (!files[m.key] || mySoundFiles.has(m.id)) continue;
     const item = { id: m.id, name: m.name, type: m.type, blob: files[m.key], added: Date.now() };
@@ -3111,6 +3122,31 @@ function syncCaptionUI() {
   $('#frame-on').checked = S.framed;
   $('#btn-frame').classList.toggle('on', S.framed);
   saveSettings();
+}
+
+// ---------- backgrounds and frames (they go on the whole video)
+function setLook(kind, id) {
+  if (S.look[kind] === id) return;
+  snapshot();
+  S.look = { ...S.look, [kind]: id };
+  syncLookPanel();
+  afterEdit();
+}
+function syncLookPanel() {
+  $$('#bg-grid .look-card').forEach(c => c.classList.toggle('active', c.dataset.id === S.look.bg));
+  $$('#frame-grid .look-card').forEach(c => c.classList.toggle('active', c.dataset.id === S.look.frame));
+}
+function buildLookPanel() {
+  const card = (kind, item) => `<button class="look-card" data-kind="${kind}" data-id="${item.id}"><canvas width="240" height="135"></canvas><span>${esc(item.name)}</span></button>`;
+  $('#bg-grid').innerHTML = BACKGROUNDS.map(b => card('bg', b)).join('');
+  $('#frame-grid').innerHTML = FRAMES.map(f => card('frame', f)).join('');
+  $$('#bg-grid .look-card').forEach(c => lookPicture(c.firstElementChild, { bg: c.dataset.id }));
+  $$('#frame-grid .look-card').forEach(c => lookPicture(c.firstElementChild, { bg: 'none', frame: c.dataset.id }));
+  for (const grid of ['#bg-grid', '#frame-grid']) $(grid).addEventListener('click', e => {
+    const c = e.target.closest('.look-card');
+    if (c) setLook(c.dataset.kind, c.dataset.id);
+  });
+  syncLookPanel();
 }
 
 function setTab(name) {
@@ -3276,6 +3312,7 @@ initAccount({
   hasClips: () => S.segments.length > 0,
 });
 buildFxPanel();
+buildLookPanel();
 buildModeGrid();
 wireUI();
 applyTheme(S.theme);
@@ -3289,4 +3326,4 @@ resizeTL();
 requestAnimationFrame(loop);
 
 // handy for debugging in the console
-window.cutroom = { to16k, polishWords, listen, regroup,  S, importFiles, addSource, deleteRange, seek, play, pause, autoCaption, captionsFromBlob, showCamBubble, hideCamBubble };
+window.cutroom = { draw,  to16k, polishWords, listen, regroup,  S, importFiles, addSource, deleteRange, seek, play, pause, autoCaption, captionsFromBlob, showCamBubble, hideCamBubble };
