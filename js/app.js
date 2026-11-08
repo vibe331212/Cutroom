@@ -510,7 +510,7 @@ function regroup(src) {
   for (let i = 0; i < w.length; i++) {
     if (i > 0) {
       const prev = w[i - 1];
-      if (count >= 5 || w[i].t0 - prev.t1 > 0.7 || /[.!?,]$/.test(prev.text)) { g++; count = 0; }
+      if (count >= 5 || w[i].t0 - prev.t1 > 0.35 || /[.!?,]$/.test(prev.text)) { g++; count = 0; }
     }
     w[i].g = g;
     count++;
@@ -729,7 +729,7 @@ function drawCaptions(L, src, A) {
   while (j1 < words.length - 1 && words[j1 + 1].g === g) j1++;
   const vis = words.slice(j0, j1 + 1).filter(w => w.t0 >= L.seg.start - 0.01 && w.t0 < L.seg.end);
   if (!vis.length) return;
-  if (t > vis[vis.length - 1].t1 + 0.6) return;
+  if (t > vis[vis.length - 1].t1 + 0.25) return;
   const cur = words[i];
 
   const st = S.captions.style;
@@ -1411,7 +1411,8 @@ let asr;
 self.onmessage = async (e) => {
   const { id, audio } = e.data;
   try {
-    if (!asr) asr = await pipeline('automatic-speech-recognition', 'Xenova/whisper-tiny.en', {
+    if (!asr) asr = await pipeline('automatic-speech-recognition', 'Xenova/whisper-base.en', {
+      dtype: 'q8', device: 'wasm',
       progress_callback: p => self.postMessage({ id, type: 'progress', p: { status: p.status, file: p.file, loaded: p.loaded, total: p.total } }),
     });
     self.postMessage({ id, type: 'status', text: 'listening' });
@@ -1436,25 +1437,134 @@ function asrRunNow(audio, onMsg) {
   if (!asrWorker) asrWorker = new Worker(URL.createObjectURL(new Blob([ASR_WORKER], { type: 'text/javascript' })), { type: 'module' });
   const id = uid('job');
   return new Promise((res, rej) => {
+    const worker = asrWorker;
+    const end = () => { worker.removeEventListener('message', h); worker.removeEventListener('error', crash); };
     const h = e => {
       const m = e.data;
       if (m.id !== id) return;
-      if (m.type === 'done') { asrWorker.removeEventListener('message', h); res(m); }
-      else if (m.type === 'error') { asrWorker.removeEventListener('message', h); rej(new Error(m.message)); }
+      if (m.type === 'done') { end(); res(m); }
+      else if (m.type === 'error') { end(); rej(new Error(m.message)); }
       else onMsg(m);
     };
-    asrWorker.addEventListener('message', h);
-    asrWorker.postMessage({ id, audio }, [audio.buffer]);
+    const crash = e => { end(); asrWorker = null; rej(new Error(e.message || 'Captions stopped')); };
+    worker.addEventListener('message', h);
+    worker.addEventListener('error', crash);
+    worker.postMessage({ id, audio }, [audio.buffer]);
   });
 }
 
+// What the AI hears (your video's sound is not changed): low rumble and hum taken out, and quiet
+// recordings turned up. A rare loud click does not count, so it cannot keep everything else quiet.
 async function to16k(ab) {
   const len = Math.max(1, Math.ceil(ab.duration * 16000));
   const oc = new OfflineAudioContext(1, len, 16000);
   const b = oc.createBufferSource();
-  b.buffer = ab; b.connect(oc.destination); b.start();
+  b.buffer = ab;
+  let out = b;
+  for (let i = 0; i < 2; i++) {
+    const hp = oc.createBiquadFilter();
+    hp.type = 'highpass'; hp.frequency.value = 100; hp.Q.value = 0.7;
+    out.connect(hp);
+    out = hp;
+  }
+  out.connect(oc.destination);
+  b.start();
   const r = await oc.startRendering();
-  return new Float32Array(r.getChannelData(0));
+  const pcm = new Float32Array(r.getChannelData(0));
+  const sample = new Float32Array(Math.min(pcm.length, 200000));
+  const step = pcm.length / sample.length;
+  for (let i = 0; i < sample.length; i++) sample[i] = Math.abs(pcm[Math.floor(i * step)]);
+  sample.sort();
+  const loud = sample[Math.floor(sample.length * 0.999)] || 0;
+  if (loud > 0.002) {
+    const k = Math.min(30, 0.8 / loud);
+    for (let i = 0; i < pcm.length; i++) pcm[i] = Math.max(-1, Math.min(1, pcm[i] * k));
+  }
+  return pcm;
+}
+
+// Finds where someone is actually making sound, in steps of 20ms.
+const VOICE_STEP = 0.02;
+function findVoice(pcm) {
+  const size = Math.round(16000 * VOICE_STEP), n = Math.floor(pcm.length / size);
+  const level = new Float32Array(n);
+  for (let f = 0; f < n; f++) {
+    let sum = 0;
+    for (let i = f * size; i < (f + 1) * size; i++) sum += pcm[i] * pcm[i];
+    level[f] = Math.sqrt(sum / size);
+  }
+  const sorted = Float32Array.from(level).sort();
+  const quiet = sorted[Math.floor(n * 0.1)] || 0, loud = sorted[Math.floor(n * 0.97)] || 0;
+  // too noisy to tell voice from background: do not guess
+  if (!n || loud < 0.005 || loud < quiet * 2.5) return null;
+  const line = quiet + (loud - quiet) * 0.08;
+  const on = new Uint8Array(n);
+  for (let f = 0; f < n; f++) on[f] = level[f] > line ? 1 : 0;
+  // small gaps inside a word still count as voice
+  for (let f = 0, gap = -1; f < n; f++) {
+    if (on[f]) { if (gap >= 0 && f - gap <= 6) on.fill(1, gap, f); gap = -1; }
+    else if (gap < 0) gap = f;
+  }
+  return on;
+}
+
+// Words are only as good as the AI's guess, so check them against the sound:
+// take out things nobody said, and move each word to where the voice really is.
+function polishWords(words, pcm) {
+  // tags like (laughing) or [inaudible], which can be split across several pieces, and stray dashes
+  const kept = [];
+  let depth = 0, tagWords = 0;
+  for (const w of words) {
+    if (depth > 0 && ++tagWords > 6) depth = 0;  // a tag that never closes must not swallow the rest
+    if (depth === 0) tagWords = 0;
+    const opens = (w.text.match(/[([{*]/g) || []).length, closes = (w.text.match(/[)\]}]/g) || []).length;
+    const inside = depth > 0 || opens > 0;
+    depth = Math.max(0, depth + opens - closes);
+    if (/\*$/.test(w.text) && !/^\*/.test(w.text)) depth = 0;
+    if (/^\*.*\*$/.test(w.text)) depth = 0;
+    if (inside) continue;
+    const text = w.text.replace(/^[-\u2013\u2014\u266a\s]+|[\u266a\s]+$/g, '');
+    if (/[a-z0-9]/i.test(text)) kept.push({ ...w, text });
+  }
+  const on = findVoice(pcm);
+  if (!on) return kept;
+  const at = t => Math.max(0, Math.min(on.length - 1, Math.round(t / VOICE_STEP)));
+  const nextOn = (t, until) => { for (let f = at(t), e = at(until); f <= e; f++) if (on[f]) return f * VOICE_STEP; return null; };
+  const prevOn = (t, until) => { for (let f = at(t), e = at(until); f >= e; f--) if (on[f]) return f * VOICE_STEP; return null; };
+  const out = [];
+  for (const w of kept) {
+    let t0 = w.t0, t1 = w.t1;
+    // no voice anywhere near this word: nobody said it
+    if (nextOn(t0 - 0.3, t1 + 0.3) === null) continue;
+    if (!on[at(t0)]) {
+      const later = nextOn(t0, t1 + 0.3);
+      if (later !== null) t0 = later;
+      else { const before = prevOn(t0, t0 - 0.3); t1 = before; t0 = Math.max(0, before - 0.08); }
+    } else {
+      // the AI often starts a phrase a little late: go back to where the voice begins
+      let f = at(t0), steps = 0;
+      while (f > 0 && on[f - 1] && steps < 8) { f--; steps++; }
+      const before = out[out.length - 1];  // only the first word of a phrase, or it would squeeze the word before it
+      if ((f === 0 || !on[f - 1]) && (!before || before.t1 <= f * VOICE_STEP + 0.02)) t0 = f * VOICE_STEP;
+    }
+    if (t1 <= t0) t1 = t0 + 0.08;
+    if (!on[at(t1)]) { const end = prevOn(t1, t0); if (end !== null) t1 = end + VOICE_STEP; }
+    t1 = Math.min(t1, t0 + 0.3 + 0.13 * w.text.length);
+    const prev = out[out.length - 1];
+    if (prev) {
+      t0 = Math.max(t0, prev.t0 + 0.02);
+      if (prev.t1 > t0) prev.t1 = Math.max(prev.t0 + 0.02, t0);
+    }
+    out.push({ ...w, t0, t1: Math.max(t1, t0 + 0.08) });
+  }
+  return out;
+}
+
+// Turns any sound into caption words.
+async function listen(ab, onMsg = () => {}) {
+  const pcm = await to16k(ab);
+  const res = await asrRun(pcm.slice(), onMsg);
+  return polishWords(wordsFromChunks(res.chunks, res.word), pcm);
 }
 
 function wordsFromChunks(chunks, word) {
@@ -1497,8 +1607,7 @@ async function autoCaption(list, { quiet = false } = {}) {
         try { src.audio = await new OfflineAudioContext(1, 1, 44100).decodeAudioData(await src.file.arrayBuffer()); }
         catch { toast(`${src.name} has no sound to caption`); src.busy = ''; continue; }
       }
-      const pcm = await to16k(src.audio);
-      const res = await asrRun(pcm, m => {
+      src.words = await listen(src.audio, m => {
         if (m.type === 'progress' && m.p.status === 'progress' && m.p.total) {
           files[m.p.file] = [m.p.loaded, m.p.total];
           const [l, t] = Object.values(files).reduce((a, [x, y]) => [a[0] + x, a[1] + y], [0, 0]);
@@ -1509,7 +1618,6 @@ async function autoCaption(list, { quiet = false } = {}) {
           status.textContent = `Listening to ${src.name}...`;
         }
       });
-      src.words = wordsFromChunks(res.chunks, res.word);
       regroup(src);
       src.busy = '';
       done++;
@@ -1809,8 +1917,7 @@ async function finishRecording() {
 // pausing catches up on what you said so far, and stopping finishes the whole clip.
 async function captionsFromBlob(blob) {
   const ab = await new OfflineAudioContext(1, 1, 44100).decodeAudioData(await blob.arrayBuffer());
-  const res = await asrRun(await to16k(ab), () => {});
-  return wordsFromChunks(res.chunks, res.word);
+  return listen(ab);
 }
 function catchUpCaptions(r) {
   if (!REC.live || !r.hasMic || !r.chunks.length || r.catching) return;
@@ -3182,4 +3289,4 @@ resizeTL();
 requestAnimationFrame(loop);
 
 // handy for debugging in the console
-window.cutroom = { S, importFiles, addSource, deleteRange, seek, play, pause, autoCaption, captionsFromBlob, showCamBubble, hideCamBubble };
+window.cutroom = { to16k, polishWords, listen, regroup,  S, importFiles, addSource, deleteRange, seek, play, pause, autoCaption, captionsFromBlob, showCamBubble, hideCamBubble };
