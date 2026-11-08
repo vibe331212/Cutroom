@@ -2614,6 +2614,15 @@ function buildSoundsPanel() {
   });
   renderSoundGroups();
   $('#sound-search').addEventListener('input', onSoundSearch);
+  $('#sound-chips').innerHTML = POPULAR_SOUNDS.map(n => `<button type="button">${n}</button>`).join('');
+  $('#sound-chips').addEventListener('click', e => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    const box = $('#sound-search');
+    // tapping the one you are on goes back to all sounds
+    box.value = b.classList.contains('active') ? '' : b.textContent;
+    onSoundSearch();
+  });
   $('#mysound-file').onchange = e => { importMySounds(e.target.files); e.target.value = ''; };
   loadMySounds();
   let cardDrag = null, justDragged = false;
@@ -2755,7 +2764,14 @@ async function searchOnline(q, more = false) {
        <div class="pe-help">From Freesound, uploaded by people around the world and marked free to use with no credit needed.</div>`
     : `<div class="online-note">No free sound called "${esc(q)}". Famous clips are usually owned by someone, so they are not here. If you have the right to use one, add its file with Import sounds in My sounds.</div>`);
 }
+// one tap searches for the sounds people use most in videos
+const POPULAR_SOUNDS = ['Wow', 'Bruh', 'Oof', 'Boom', 'Bonk', 'Air horn', 'Whoosh', 'Ding', 'Laugh', 'Fail', 'Drum roll', 'Record scratch', 'Sad trombone', 'Fart'];
+function syncSoundChips() {
+  const q = soundQuery();
+  $$('#sound-chips button').forEach(b => b.classList.toggle('active', b.textContent.toLowerCase() === q));
+}
 function onSoundSearch() {
+  syncSoundChips();
   renderSoundGroups();
   clearTimeout(onlineTimer);
   onlineToken++;
