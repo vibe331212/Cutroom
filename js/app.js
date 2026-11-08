@@ -556,7 +556,7 @@ function pause() {
   stopSfx();
   updatePlayButton();
 }
-function togglePlay() { S.playing ? pause() : play(); }
+function togglePlay() { clearTimeout(previewStop); S.playing ? pause() : play(); }
 
 function syncMedia(force) {
   const L = locate(S.playhead);
@@ -2435,30 +2435,71 @@ function pickVideoFx(id, mix) {
   toast(next.length ? `${next.length > 1 ? `${next.length} filters` : fxName(id)} on ${where}` : `Filters removed from ${where}`, 1800);
 }
 
+// A voice goes on your selection. With nothing selected it goes on the whole clip, even if the
+// clip has been cut into pieces, so it never changes only one small piece by surprise.
+function voiceTarget() {
+  const sel = selRange();
+  if (sel && sel[1] - sel[0] >= 0.05) return { a: sel[0], b: sel[1], sel: true };
+  const L = S.segments.length ? locate(S.playhead) : null;
+  if (!L) return null;
+  let acc = 0, a = null, b = 0;
+  for (const s of S.segments) {
+    const len = s.end - s.start;
+    if (s.src === L.seg.src) { if (a === null) a = acc; b = acc + len; }
+    acc += len;
+  }
+  return { a, b, sel: false, src: L.seg.src };
+}
 function setVoice(t, id) {
   snapshot();
   if (t.sel) { splitQuiet(t.a); splitQuiet(t.b); }
   let acc = 0;
   for (const s of S.segments) {
     const len = s.end - s.start, mid = acc + len / 2;
-    if (mid > t.a && mid < t.b) { if (id === 'normal') delete s.voice; else s.voice = id; }
+    if (t.src ? s.src === t.src : mid > t.a && mid < t.b) { if (id === 'normal') delete s.voice; else s.voice = id; }
     acc += len;
   }
   afterEdit();
 }
 let previewStop = null;
 function pickVoice(id) {
-  const t = fxTarget();
+  const t = voiceTarget();
   if (!t) { toast('Add a video or recording first'); return; }
   setVoice(t, id);
   fxPanelKey = '';
   ensureAudio();
-  // play a few seconds so you can hear it right away
+  // play a few seconds of the part that changed, so you can hear it right away
   clearTimeout(previewStop);
   seek(t.a);
   play();
-  previewStop = setTimeout(() => { if (S.playing) pause(); }, 4000);
-  toast(id === 'normal' ? 'Back to your normal voice' : `${voiceName(id)} voice on ${t.sel ? 'your selection' : 'this part'}`, 1800);
+  const until = Math.min(t.a + 4, t.b);
+  const watch = () => {
+    if (!S.playing) return;
+    if (S.playhead >= until - 0.02) { pause(); return; }
+    previewStop = setTimeout(watch, 40);
+  };
+  previewStop = setTimeout(watch, 40);
+  const words = id === 'normal' ? 'Back to your normal voice' : `${voiceName(id)} voice on ${t.sel ? 'your selection' : 'your whole clip'}`;
+  toast(words, 1800);
+  checkVoiceSound();
+}
+// If nothing can be heard, say why instead of leaving you guessing.
+function checkVoiceSound() {
+  const an = actx.createAnalyser();
+  an.fftSize = 2048;
+  master.connect(an);
+  const wave = new Float32Array(an.fftSize);
+  let loudest = 0, checks = 0;
+  const timer = setInterval(() => {
+    an.getFloatTimeDomainData(wave);
+    for (const v of wave) loudest = Math.max(loudest, Math.abs(v));
+    if (++checks < 12 && S.playing && loudest < 0.004) return;
+    clearInterval(timer);
+    master.disconnect(an);
+    if (loudest >= 0.004) return;
+    if (actx.state !== 'running') toast('Your browser paused the sound. Click anywhere on the page, then try again.', 4200);
+    else toast('No sound is coming from this part, so there is no voice to change. Was your mic on when you recorded?', 4800);
+  }, 150);
 }
 
 let fxPanelKey = '';
@@ -2474,7 +2515,9 @@ function syncFxPanel() {
   $('#fx-target').innerHTML = !t ? 'Add a video to the timeline to use filters.'
     : `<span class="fx-dot"></span><span>Changing <b>${t.sel ? 'your selection' : 'the part under the playhead'}</b>, ${fmt(t.a, false)} to ${fmt(t.b, false)}</span>`;
   $$('#voice-grid .voice-card, #pitch-grid .voice-card').forEach(c => c.classList.toggle('active', c.dataset.voice === (seg?.voice || 'normal')));
-  $('#pitch-target').innerHTML = $('#fx-target').innerHTML;
+  const vt = voiceTarget();
+  $('#pitch-target').innerHTML = !vt ? 'Add a video or recording to change its voice.'
+    : `<span class="fx-dot"></span><span>Changing <b>${vt.sel ? 'your selection' : 'your whole clip'}</b>, ${fmt(vt.a, false)} to ${fmt(vt.b, false)}</span>`;
   $$('#vfx-grid .filter-card').forEach(c => {
     const n = fx.indexOf(c.dataset.filter);
     c.classList.toggle('active', c.dataset.filter === 'original' ? !fx.length : n >= 0);
@@ -3326,4 +3369,4 @@ resizeTL();
 requestAnimationFrame(loop);
 
 // handy for debugging in the console
-window.cutroom = { draw,  to16k, polishWords, listen, regroup,  S, importFiles, addSource, deleteRange, seek, play, pause, autoCaption, captionsFromBlob, showCamBubble, hideCamBubble };
+window.cutroom = { draw, audio: () => ({ actx, master }),  to16k, polishWords, listen, regroup,  S, importFiles, addSource, deleteRange, seek, play, pause, autoCaption, captionsFromBlob, showCamBubble, hideCamBubble };
