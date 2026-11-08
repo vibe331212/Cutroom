@@ -2526,6 +2526,35 @@ function setView(v) {
 // ---------- sound effects (all made from scratch in sfx.js)
 let sfxFrom = 0;              // where the playhead was last time we checked
 const sfxPlaying = new Set();
+// Hearing a sound in the list: the play button turns into a pause button that stops it.
+let preview = null, previewToken = 0;
+function syncPreview() {
+  $$('.sound-card').forEach(c => {
+    const on = preview?.id === c.dataset.sound, btn = c.querySelector('.sound-play');
+    if (!btn) return;
+    btn.querySelector('use').setAttribute('href', on ? '#i-pause' : '#i-play');
+    btn.title = on ? 'Stop' : 'Hear it';
+  });
+}
+function stopPreview() {
+  previewToken++;
+  try { preview?.src?.stop(); } catch {}
+  preview = null;
+  syncPreview();
+}
+async function togglePreview(id) {
+  const same = preview?.id === id;
+  stopPreview();
+  if (same) return;
+  const token = previewToken;
+  preview = { id, src: null };
+  syncPreview();
+  const src = await playSoundNow(id, 1, sfxVoice);
+  if (token !== previewToken) { try { src?.stop(); } catch {} return; }  // stopped while it was loading
+  if (!src) { preview = null; syncPreview(); return; }
+  preview.src = src;
+  src.addEventListener('ended', () => { if (token === previewToken) { preview = null; syncPreview(); } });
+}
 
 let sfxVoice = 'man';  // the voice type picked in the Sounds tab
 const voiceTypeName = v => (VOICE_TYPES.find(t => t.id === v) || VOICE_TYPES[0]).name;
@@ -2564,6 +2593,7 @@ async function playSoundNow(id, vol = 1, voice = 'man', from = 0, len = null) {
   sfxPlaying.add(src);
   src.start(t, from, play + 0.01);
   if (useSpare) setTimeout(() => { sfxPlaying.delete(src); spare.close(); }, (play + 1) * 1000);
+  return src;
 }
 // how long each sound is, so the timeline can draw it as a bar
 const sfxDur = new Map();
@@ -2670,7 +2700,7 @@ function buildSoundsPanel() {
     if (!card) return;
     if (b?.dataset.act === 'remove') { removeMySound(card.dataset.sound); return; }
     if (b?.dataset.act === 'add') addSfx(card.dataset.sound);
-    else playSoundNow(card.dataset.sound, 1, sfxVoice);
+    else togglePreview(card.dataset.sound);
   });
   $('#sfx-list').addEventListener('click', e => {
     const row = e.target.closest('[data-id]'), b = e.target.closest('[data-act]');
@@ -2692,6 +2722,10 @@ function buildSoundsPanel() {
 }
 const soundQuery = () => ($('#sound-search')?.value || '').trim().toLowerCase();
 function renderSoundGroups() {
+  drawSoundGroups();
+  syncPreview();
+}
+function drawSoundGroups() {
   const q = soundQuery(), words = q.split(/\s+/).filter(Boolean);
   const hit = s => words.every(w => `${s.name} ${s.group}`.toLowerCase().includes(w));
   $('#sound-browse').hidden = !!q;
@@ -2728,6 +2762,7 @@ function onlineCard(s) {
 }
 function showOnline(html) {
   $('#sound-online').innerHTML = `<div class="field-label sound-group-label"><span>Free online sounds</span></div>${html}`;
+  syncPreview();
 }
 async function searchOnline(q, more = false) {
   const token = ++onlineToken;
