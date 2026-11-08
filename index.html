@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Anton&family=Bangers&family=Bebas+Neue&family=Caveat:wght@700&family=Lobster&family=Pacifico&family=Permanent+Marker&family=Playfair+Display:wght@800&family=Press+Start+2P&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=31">
+<link rel="stylesheet" href="styles.css?v=32">
 </head>
 <body data-tone="light">
 <canvas id="scene" class="scene-bg"></canvas>
@@ -39,7 +39,8 @@
     <symbol id="i-logout" viewBox="0 0 24 24"><path d="M14 4.5h3.5a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H14M10 16l-4-4 4-4M6 12h9" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
     <symbol id="i-google" viewBox="0 0 24 24"><path d="M21.6 12.23c0-.68-.06-1.33-.17-1.96H12v3.7h5.38a4.6 4.6 0 0 1-2 3.02v2.5h3.24c1.9-1.75 2.98-4.33 2.98-7.26z" fill="#4285F4"/><path d="M12 22c2.7 0 4.96-.9 6.62-2.43l-3.24-2.5c-.9.6-2.04.96-3.38.96-2.6 0-4.8-1.76-5.6-4.12H3.06v2.6A10 10 0 0 0 12 22z" fill="#34A853"/><path d="M6.4 13.9a6 6 0 0 1 0-3.8V7.5H3.06a10 10 0 0 0 0 9z" fill="#FBBC05"/><path d="M12 5.98c1.47 0 2.79.5 3.83 1.5l2.87-2.87A9.6 9.6 0 0 0 12 2a10 10 0 0 0-8.94 5.5L6.4 10.1C7.2 7.74 9.4 5.98 12 5.98z" fill="#EA4335"/></symbol>
     <symbol id="i-type" viewBox="0 0 24 24"><path d="M5 6.5V5h14v1.5M12 5v14M9 19h6" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></symbol>
-    <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="m20 20-4-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+<symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
     <symbol id="i-cc" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="3" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M10.5 10.2a2.3 2.3 0 1 0 0 3.6M17 10.2a2.3 2.3 0 1 0 0 3.6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
     <symbol id="i-text" viewBox="0 0 24 24"><path d="M4 6h16M4 12h10M4 18h13" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></symbol>
     <symbol id="i-layers" viewBox="0 0 24 24"><path d="m12 3 9 5-9 5-9-5z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="m3 13 9 5 9-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></symbol>
@@ -186,14 +187,21 @@
 
     <section class="tab-panel" data-panel="sounds">
       <div class="h">Sound effects</div>
-      <div class="sub">Real recorded sounds by Kenney.nl (free for anyone to use, even in your videos), plus extra ones made in Cutroom. Click a sound to hear it. Drag it onto the timeline, or press + to add it at the playhead. Drag an orange bar to move it, or drag its edges to make the sound shorter.</div>
-      <div class="field-label">On your video</div>
-      <div class="sfx-list" id="sfx-list"></div>
-      <div class="pe-help" id="sfx-empty">No sounds yet. Move the playhead, then press + on a sound.</div>
-      <div class="field-label">Voice for voice sounds</div>
-      <div class="voice-pick" id="sfx-voices"></div>
-      <div class="pe-help">Sounds with a purple dot use this voice. Woman uses a real recording of a woman.</div>
+      <div class="sound-search-box">
+        <svg class="i"><use href="#i-search"/></svg>
+        <input type="search" id="sound-search" placeholder="Search sounds, like wow or whoosh" autocomplete="off" spellcheck="false" aria-label="Search sounds">
+      </div>
+      <div id="sound-browse">
+        <div class="sub">Click a sound to hear it. Drag it onto the timeline, or press + to add it at the playhead. Drag an orange bar to move it, or drag its edges to make the sound shorter.</div>
+        <div class="field-label">On your video</div>
+        <div class="sfx-list" id="sfx-list"></div>
+        <div class="pe-help" id="sfx-empty">No sounds yet. Move the playhead, then press + on a sound.</div>
+        <div class="field-label">Voice for voice sounds</div>
+        <div class="voice-pick" id="sfx-voices"></div>
+        <div class="pe-help">Sounds with a purple dot use this voice. Woman uses a real recording of a woman.</div>
+      </div>
       <div id="sound-groups"></div>
+      <div id="sound-online"></div>
       <input type="file" id="mysound-file" accept="audio/*" multiple hidden>
     </section>
 
@@ -576,6 +584,6 @@
 <div class="toast" id="toast"></div>
 <div class="media-pool" id="media-pool"></div>
 
-<script type="module" src="js/app.js?v=38"></script>
+<script type="module" src="js/app.js?v=39"></script>
 </body>
 </html>

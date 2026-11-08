@@ -4,7 +4,7 @@ import { initPhoto, Photo, FILTERS, applyFilter, findFaces, keepAwake } from './
 import { VOICES, makeVoice, voiceName } from './voices.js?v=4';
 import { initAccount, settingsChanged, syncSaveButton } from './account.js?v=2';
 import { TextLayer, newText } from './text.js?v=1';
-import { SOUNDS, SOUND_GROUPS, VOICE_TYPES, soundOf, renderSound, addCustomSound, removeCustomSound } from './sfx.js?v=6';
+import { SOUNDS, SOUND_GROUPS, VOICE_TYPES, soundOf, renderSound, addCustomSound, removeCustomSound, addOnlineSound } from './sfx.js?v=7';
 import { listMySounds, saveMySound, deleteMySound } from './mysounds.js?v=1';
 
 const $ = (s, r = document) => r.querySelector(s);
@@ -2591,6 +2591,7 @@ function fireSfx() {
 
 function addSfx(id, at = S.playhead) {
   if (!S.segments.length) { toast('Add a video first, then add sounds to it'); return; }
+  keepOnlineSound(id);
   snapshot();
   const voice = soundOf(id).voice ? sfxVoice : undefined;
   S.sfx.push({ id: uid('fx'), sound: id, at, vol: 1, ...(voice ? { voice } : {}) });
@@ -2612,10 +2613,11 @@ function buildSoundsPanel() {
     playSoundNow('v-congrats', 1, sfxVoice);  // a quick sample of the new voice
   });
   renderSoundGroups();
+  $('#sound-search').addEventListener('input', onSoundSearch);
   $('#mysound-file').onchange = e => { importMySounds(e.target.files); e.target.value = ''; };
   loadMySounds();
   let cardDrag = null, justDragged = false;
-  $('#sound-groups').addEventListener('pointerdown', e => {
+  for (const box of ['#sound-groups', '#sound-online']) $(box).addEventListener('pointerdown', e => {
     const card = e.target.closest('.sound-card');
     if (!card || e.button !== 0) return;
     cardDrag = { sound: card.dataset.sound, x: e.clientX, y: e.clientY, ghost: null };
@@ -2651,9 +2653,10 @@ function buildSoundsPanel() {
     sfxDrop = null;
     tlDirty = true;
   });
-  $('#sound-groups').addEventListener('click', e => {
+  for (const box of ['#sound-groups', '#sound-online']) $(box).addEventListener('click', e => {
     const b = e.target.closest('[data-act]'), card = e.target.closest('.sound-card');
     if (justDragged) return;
+    if (b?.dataset.act === 'more-online') { b.disabled = true; b.textContent = 'Loading...'; searchOnline(soundQuery(), true); return; }
     if (b?.dataset.act === 'import') { $('#mysound-file').click(); return; }
     if (!card) return;
     if (b?.dataset.act === 'remove') { removeMySound(card.dataset.sound); return; }
@@ -2678,13 +2681,19 @@ function buildSoundsPanel() {
   });
   renderSfxList();
 }
+const soundQuery = () => ($('#sound-search')?.value || '').trim().toLowerCase();
 function renderSoundGroups() {
-  $('#sound-groups').innerHTML = SOUND_GROUPS.map(g => {
-    const list = SOUNDS.filter(s => s.group === g);
+  const q = soundQuery(), words = q.split(/\s+/).filter(Boolean);
+  const hit = s => words.every(w => `${s.name} ${s.group}`.toLowerCase().includes(w));
+  $('#sound-browse').hidden = !!q;
+  const none = q && !SOUNDS.some(s => !s.online && hit(s));
+  $('#sound-groups').innerHTML = none ? '' : SOUND_GROUPS.map(g => {
+    const list = SOUNDS.filter(s => s.group === g && hit(s));
     const mine = g === 'My sounds';
+    if (q && !list.length) return '';
     return `
     <div class="field-label sound-group-label"><span>${g}</span>${mine ? '<button class="mini-btn" data-act="import"><svg class="i"><use href="#i-upload"/></svg>Import sounds</button>' : ''}</div>
-    ${mine && !list.length ? '<div class="mysounds-empty">Add your own sound files (MP3, WAV, M4A and more). Only use sounds you are allowed to, like ones from YouTube\'s free Audio Library.</div>' : ''}
+    ${mine && !list.length && !q ? '<div class="mysounds-empty">Add your own sound files (MP3, WAV, M4A and more). Only use sounds you are allowed to, like ones from YouTube\'s free Audio Library.</div>' : ''}
     <div class="sound-grid">${list.map(s => `
       <div class="sound-card${mine ? ' mine' : ''}" data-sound="${s.id}">
         <button class="sound-play" data-act="hear" title="Hear it"><svg class="i"><use href="#i-play"/></svg></button>
@@ -2693,6 +2702,85 @@ function renderSoundGroups() {
         <button class="sound-add" data-act="add" title="Add at the playhead"><svg class="i"><use href="#i-plus"/></svg></button>
       </div>`).join('')}</div>`;
   }).join('');
+}
+
+// ---------- searching free sounds online. Openverse lists Freesound's sounds and needs no sign-in.
+// Only CC0 sounds are shown: their makers gave them to everyone, so no credit is needed.
+const OPENVERSE = 'https://api.openverse.org/v1/audio/';
+const onlineCache = new Map();
+let onlineTimer = null, onlineToken = 0;
+function onlineCard(s) {
+  return `
+    <div class="sound-card" data-sound="${s.id}">
+      <button class="sound-play" data-act="hear" title="Hear it"><svg class="i"><use href="#i-play"/></svg></button>
+      <span class="sound-name">${esc(s.name)}<small>${s.dur.toFixed(1)}s, by ${esc(s.by)}</small></span>
+      <button class="sound-add" data-act="add" title="Add at the playhead"><svg class="i"><use href="#i-plus"/></svg></button>
+    </div>`;
+}
+function showOnline(html) {
+  $('#sound-online').innerHTML = `<div class="field-label sound-group-label"><span>Free online sounds</span></div>${html}`;
+}
+async function searchOnline(q, more = false) {
+  const token = ++onlineToken;
+  let got = onlineCache.get(q);
+  if (!got || more) {
+    if (!more) showOnline('<div class="online-note"><div class="spinner dark"></div>Searching...</div>');
+    const page = got ? got.page + 1 : 1;
+    try {
+      // without an account Openverse gives up to 20 results a page
+      const r = await fetch(`${OPENVERSE}?${new URLSearchParams({ q, license: 'cc0', source: 'freesound', page_size: '20', page })}`);
+      if (r.status === 429) throw new Error('busy');
+      if (!r.ok) throw new Error(`status ${r.status}`);
+      const data = await r.json();
+      const found = data.results
+        .filter(x => x.url && x.duration > 0 && x.duration <= 20000)
+        .map(x => addOnlineSound({
+          id: `my-fs-${x.id.slice(0, 13)}`,
+          name: x.title.replace(/\.(wav|mp3|aif+|ogg|flac|m4a)$/i, '').replace(/_/g, ' ').slice(0, 60),
+          url: x.url, by: x.creator || 'Freesound', dur: x.duration / 1000,
+        }));
+      got = { list: [...(got?.list || []), ...found], page, more: page < data.page_count };
+      onlineCache.set(q, got);
+    } catch (err) {
+      console.warn('online sounds', err);
+      if (token !== onlineToken) return;
+      showOnline(`<div class="online-note">${err.message === 'busy' ? 'Too many searches right now. Wait a minute and try again.' : 'Could not reach online sounds. Check your internet and try again.'}</div>`);
+      return;
+    }
+  }
+  if (token !== onlineToken) return;
+  showOnline(got.list.length
+    ? `<div class="sound-grid">${got.list.map(onlineCard).join('')}</div>
+       ${got.more ? '<button class="secondary-btn full" data-act="more-online">More sounds</button>' : ''}
+       <div class="pe-help">From Freesound, uploaded by people around the world and marked free to use with no credit needed.</div>`
+    : `<div class="online-note">No free sound called "${esc(q)}". Famous clips are usually owned by someone, so they are not here. If you have the right to use one, add its file with Import sounds in My sounds.</div>`);
+}
+function onSoundSearch() {
+  renderSoundGroups();
+  clearTimeout(onlineTimer);
+  onlineToken++;
+  const q = soundQuery();
+  if (q.length < 2) { $('#sound-online').innerHTML = ''; return; }
+  onlineTimer = setTimeout(() => searchOnline(q), onlineCache.has(q) ? 0 : 500);
+}
+// Adding an online sound keeps a copy in My sounds, so it still works next time.
+async function keepOnlineSound(id) {
+  const s = soundOf(id);
+  if (!s?.online) return;
+  s.online = false;
+  try {
+    const blob = await (await fetch(s.file)).blob();
+    const item = { id, name: s.name, type: blob.type || 'audio/mpeg', blob, added: Date.now() };
+    mySoundFiles.set(id, new File([blob], s.name, { type: item.type }));
+    s.group = 'My sounds';
+    s.custom = true;
+    await saveMySound(item);
+  } catch (err) {
+    console.warn('keep sound', err);
+    s.online = true;
+    toast('That sound is on your video, but it could not be saved for next time.', 3000);
+  }
+  renderSoundGroups();
 }
 
 // ---------- My sounds: your own sound files, remembered in this browser

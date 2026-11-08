@@ -246,6 +246,14 @@ for (const s of SOUNDS) if (['wow', 'wow-deep', 'woah', 'yay', 'ooh', 'crowd-ooh
 export function addCustomSound({ id, name, url }) {
   if (!SOUNDS.some(s => s.id === id)) SOUNDS.unshift({ id, name, group: 'My sounds', file: url, custom: true });
 }
+// A sound found by online search. It becomes one of My sounds once it is added to a video.
+export function addOnlineSound({ id, name, url, by, dur }) {
+  const had = SOUNDS.find(s => s.id === id);
+  if (had) return Object.assign(had, { by, dur });  // already one of My sounds
+  const s = { id, name, group: 'Online', file: url, online: true, by, dur };
+  SOUNDS.push(s);
+  return s;
+}
 export function removeCustomSound(id) {
   const i = SOUNDS.findIndex(s => s.id === id && s.custom);
   if (i >= 0) { URL.revokeObjectURL(SOUNDS[i].file); SOUNDS.splice(i, 1); }
