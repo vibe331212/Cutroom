@@ -288,6 +288,7 @@ export function renderSound(id, voice = 'man') {
       s.make(ctx, out);
       made = ctx.startRendering();
     }
+    made.catch(() => cache.delete(key));  // a failed load can be tried again
     cache.set(key, made.then(buf => {
       // make every sound about as loud as the others
       let peak = 0;

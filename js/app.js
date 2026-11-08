@@ -1,10 +1,10 @@
 // Cutroom: a browser video editor. Plain JavaScript modules, no build step.
 import { THEMES, Scene, findTheme, renderPreview } from './themes.js?v=4';
-import { initPhoto, Photo, FILTERS, applyFilter, findFaces } from './photo.js?v=18';
+import { initPhoto, Photo, FILTERS, applyFilter, findFaces, keepAwake } from './photo.js?v=19';
 import { VOICES, makeVoice, voiceName } from './voices.js?v=4';
 import { initAccount, settingsChanged, syncSaveButton } from './account.js?v=2';
 import { TextLayer, newText } from './text.js?v=1';
-import { SOUNDS, SOUND_GROUPS, VOICE_TYPES, soundOf, renderSound, addCustomSound, removeCustomSound } from './sfx.js?v=5';
+import { SOUNDS, SOUND_GROUPS, VOICE_TYPES, soundOf, renderSound, addCustomSound, removeCustomSound } from './sfx.js?v=6';
 import { listMySounds, saveMySound, deleteMySound } from './mysounds.js?v=1';
 
 const $ = (s, r = document) => r.querySelector(s);
@@ -83,7 +83,8 @@ ticker.onmessage = () => {
 // ---------- audio graph: every clip plays through here so exports can capture the sound
 let actx = null, master = null, exportDest = null;
 function ensureAudio() {
-  if (actx) { if (actx.state === 'suspended') actx.resume(); return; }
+  // Safari can also leave it "interrupted" after a recording or another app used the sound
+  if (actx) { if (actx.state !== 'running') actx.resume().catch(() => {}); return; }
   actx = new AudioContext();
   master = actx.createGain();
   exportDest = actx.createMediaStreamDestination();
@@ -1732,6 +1733,7 @@ async function countdown(n) {
     await sleep(1000);
   }
   el.hidden = true;
+  await sleep(700);  // a screen recording sees things a moment late, so wait until the countdown has left it
 }
 
 const recElapsed = () => !rec || !rec.startedAt ? 0 : ((rec.pausedAt || performance.now()) - rec.startedAt - rec.pausedAcc) / 1000;
@@ -1960,8 +1962,9 @@ async function generateThumbs() {
   updateHeadlines();
   const btn = $('#btn-thumb');
   btn.disabled = true;
+  const letSleep = keepAwake();  // keep going while you are in another app
   try { await makeThumbs(tiles, prompt, $('#th-engine').value); }
-  finally { btn.disabled = false; }
+  finally { btn.disabled = false; letSleep(); }
 }
 
 async function makeThumbs(tiles, prompt, engine) {
@@ -2142,6 +2145,7 @@ async function changeThumb(tile, change) {
   tile.querySelectorAll('button').forEach(b => { b.disabled = true; });
   form.hidden = true;
   media.insertAdjacentHTML('beforeend', '<div class="thumb-state over"><div class="spinner"></div><span>Getting in line...</span></div>');
+  const letSleep = keepAwake();  // keep going while you are in another app
   try {
     const job = await hordeSubmit(prompt, 1, source);
     await hordeWait(job, text => tileLabel(tile, text));
@@ -2153,7 +2157,7 @@ async function changeThumb(tile, change) {
     media.querySelector('.thumb-state')?.remove();
     tile.querySelectorAll('button').forEach(b => { b.disabled = false; });
     toast(err.status === 451 ? 'The safety filter blocked that change. Try different words.' : 'The AI is busy right now. Try the change again in a minute.', 3600);
-  }
+  } finally { letSleep(); }
 }
 
 // "Edit": open the thumbnail in the photo editor (text, filters, blur, AI Unblur, export).
@@ -2527,21 +2531,39 @@ let sfxVoice = 'man';  // the voice type picked in the Sounds tab
 const voiceTypeName = v => (VOICE_TYPES.find(t => t.id === v) || VOICE_TYPES[0]).name;
 async function playSoundNow(id, vol = 1, voice = 'man', from = 0, len = null) {
   ensureAudio();
-  const buf = await renderSound(id, voice);
+  // If the sound system is paused, get a spare one ready while we still have your click,
+  // because browsers only let a click start sound.
+  let spare = null;
+  if (actx.state !== 'running') {
+    try { spare = new (window.AudioContext || window.webkitAudioContext)(); spare.resume().catch(() => {}); } catch {}
+  }
+  let buf;
+  try { buf = await renderSound(id, voice); }
+  catch (err) {
+    console.warn('sound', id, voice, err);
+    spare?.close();
+    toast('That sound could not load. Try it again.');
+    return;
+  }
   sfxDur.set(`${id}|${voice || 'man'}`, buf.duration);
-  const src = actx.createBufferSource(), g = actx.createGain();
+  if (spare) await Promise.race([actx.resume().catch(() => {}), sleep(300)]);
+  const useSpare = spare && actx.state !== 'running';
+  if (spare && !useSpare) { spare.close(); spare = null; }
+  const ctx = useSpare ? spare : actx;
+  const src = ctx.createBufferSource(), g = ctx.createGain();
   src.buffer = buf;
-  const t = actx.currentTime, play = Math.min(len ?? buf.duration, buf.duration - from);
+  const t = ctx.currentTime, play = Math.min(len ?? buf.duration, buf.duration - from);
   g.gain.setValueAtTime(from > 0 ? 0 : vol, t);
   if (from > 0) g.gain.linearRampToValueAtTime(vol, t + 0.012);
   if (play < buf.duration - from - 0.01) {
     g.gain.setValueAtTime(vol, t + Math.max(0, play - 0.035));
     g.gain.linearRampToValueAtTime(0, t + play);
   }
-  src.connect(g).connect(master);  // through master, so exports hear it too
+  src.connect(g).connect(useSpare ? ctx.destination : master);  // through master, so exports hear it too
   src.onended = () => sfxPlaying.delete(src);
   sfxPlaying.add(src);
   src.start(t, from, play + 0.01);
+  if (useSpare) setTimeout(() => { sfxPlaying.delete(src); spare.close(); }, (play + 1) * 1000);
 }
 // how long each sound is, so the timeline can draw it as a bar
 const sfxDur = new Map();

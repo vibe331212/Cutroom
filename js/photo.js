@@ -408,9 +408,34 @@ function compose(original = false) {
   vctx.drawImage(layer, 0, 0);
   textLayer?.draw(vctx, view.width, view.height);
 }
+// While AI is working its message stays up, even when a filter or button shows its own for a moment.
+let aiMessage = null;
 function busy(on, text) {
-  $('#ph-busy').hidden = !on;
-  if (text) $('#ph-busy-text').textContent = text;
+  $('#ph-busy').hidden = !on && !aiMessage;
+  const show = on ? text : aiMessage;
+  if (show) $('#ph-busy-text').textContent = show;
+}
+function aiBusy(text) { aiMessage = text; busy(!!text, text); }
+
+// Asks the browser not to pause this page while AI works and you are in another app:
+// a held lock, and a tone far too quiet to hear (browsers leave pages that play sound running).
+export function keepAwake() {
+  let unlock = null, ctx = null, osc = null;
+  try { navigator.locks?.request(`cutroom-ai-${Date.now()}-${Math.random()}`, () => new Promise(r => { unlock = r; })); } catch {}
+  try {
+    ctx = new (window.AudioContext || window.webkitAudioContext)();
+    osc = ctx.createOscillator();
+    const g = ctx.createGain();
+    osc.frequency.value = 30;
+    g.gain.value = 0.0005;
+    osc.connect(g).connect(ctx.destination);
+    osc.start();
+    ctx.resume().catch(() => {});
+  } catch {}
+  return () => {
+    unlock?.();
+    try { osc?.stop(); ctx?.close(); } catch {}
+  };
 }
 
 // ---------- AI Unblur: a free model that runs on this computer and needs no sign-in
@@ -439,23 +464,75 @@ function runUnblur(small, onMsg) {
   const id = `u${Date.now()}`;
   const img = pixels(small);
   return new Promise((res, rej) => {
+    const worker = unblurWorker;
+    const end = () => { worker.removeEventListener('message', h); worker.removeEventListener('error', crash); };
     const h = e => {
       const m = e.data;
       if (m.id !== id) return;
-      if (m.type === 'done') { unblurWorker.removeEventListener('message', h); res(m); }
-      else if (m.type === 'error') { unblurWorker.removeEventListener('message', h); rej(new Error(m.message)); }
+      if (m.type === 'done') { end(); res(m); }
+      else if (m.type === 'error') { end(); rej(new Error(m.message)); }
       else onMsg(m);
     };
-    unblurWorker.addEventListener('message', h);
+    // if the worker itself dies (out of memory, say), say so instead of waiting forever
+    const crash = e => { end(); unblurWorker = null; rej(new Error(e.message || 'AI Unblur stopped')); };
+    worker.addEventListener('message', h);
+    worker.addEventListener('error', crash);
     unblurWorker.postMessage({ id, data: img.data.buffer, width: img.width, height: img.height }, [img.data.buffer]);
   });
 }
 
+// Finds the darkest (or brightest) value near every pixel, one line at a time.
+function rangePass(src, dst, n, lines, stepI, stepL, r, wantMax) {
+  const q = new Int32Array(n);
+  for (let l = 0; l < lines; l++) {
+    const o = l * stepL;
+    let head = 0, tail = 0;
+    for (let i = 0; i < n + r; i++) {
+      if (i < n) {
+        const v = src[o + i * stepI];
+        while (tail > head && (wantMax ? src[o + q[tail - 1] * stepI] <= v : src[o + q[tail - 1] * stepI] >= v)) tail--;
+        q[tail++] = i;
+      }
+      const j = i - r;
+      if (j < 0) continue;
+      while (q[head] < j - r) head++;
+      dst[o + j * stepI] = src[o + q[head] * stepI];
+    }
+  }
+}
+function localRange(src, w, h, r, wantMax) {
+  const a = new Uint8Array(src.length), b = new Uint8Array(src.length);
+  rangePass(src, a, w, h, 1, w, r, wantMax);
+  rangePass(a, b, h, w, w, 1, r, wantMax);
+  return b;
+}
+
+// The AI likes to draw hard lines around things. This keeps what it sharpened but removes the lines:
+// no pixel may go brighter or darker than the photo already is nearby (that is what makes an outline
+// pop out), and big changes are pulled back so new lines cannot appear.
+export function calmUnblur(base, sharp, { reach = 1.5, limit = 34, mix = 0.85 } = {}) {
+  const w = base.width, h = base.height;
+  const was = pixels(base), now = pixels(sharp), a = was.data, s = now.data;
+  const r = Math.max(1, Math.round(Math.max(w, h) / UNBLUR_SIDE * reach));
+  const ch = new Uint8Array(w * h);
+  for (let c = 0; c < 3; c++) {
+    for (let i = 0; i < ch.length; i++) ch[i] = a[i * 4 + c];
+    const lo = localRange(ch, w, h, r, false), hi = localRange(ch, w, h, r, true);
+    for (let i = 0; i < ch.length; i++) {
+      const v = Math.min(hi[i], Math.max(lo[i], s[i * 4 + c]));
+      const d = v - ch[i];
+      s[i * 4 + c] = ch[i] + mix * limit * Math.tanh(d / limit);
+    }
+  }
+  return fromPixels(now);
+}
+
 async function aiUnblur() {
   if (!P.base) { toast('Open or take a photo first'); return; }
-  const btn = $('#ph-unblur'), base = P.base;
+  const btn = $('#ph-unblur'), base = P.base, photo = P.original;
   btn.disabled = true;
-  busy(true, 'Getting AI Unblur ready...');
+  aiBusy('Getting AI Unblur ready... You can keep working or switch apps.');
+  const letSleep = keepAwake();
   const files = {};
   try {
     const k = Math.min(1, UNBLUR_SIDE / Math.max(base.width, base.height));
@@ -466,10 +543,11 @@ async function aiUnblur() {
       if (m.type === 'progress' && m.p.status === 'progress' && m.p.total) {
         files[m.p.file] = [m.p.loaded, m.p.total];
         const [l, t] = Object.values(files).reduce((a, [x, y]) => [a[0] + x, a[1] + y], [0, 0]);
-        busy(true, `Downloading AI Unblur ${Math.round(l / t * 100)}%`);
-      } else if (m.type === 'status') busy(true, 'AI is unblurring your photo...');
+        aiBusy(`Downloading AI Unblur ${Math.round(l / t * 100)}%`);
+      } else if (m.type === 'status') aiBusy('AI is unblurring your photo... You can keep working or switch apps.');
     });
-    if (P.base !== base) return;  // a different photo was opened meanwhile
+    // only opening a different photo leaves the result with nowhere to go; any other button is fine
+    if (P.original !== photo) { toast('AI Unblur finished, but a different photo is open now, so it was not used.', 4000); return; }
     const rgba = new ImageData(out.width, out.height), o = rgba.data, ch = out.channels;
     for (let i = 0, j = 0; i < o.length; i += 4, j += ch) {
       o[i] = out.data[j]; o[i + 1] = out.data[j + 1]; o[i + 2] = out.data[j + 2]; o[i + 3] = 255;
@@ -477,8 +555,9 @@ async function aiUnblur() {
     const sharp = makeCanvas(base.width, base.height), g = sharp.getContext('2d');
     g.imageSmoothingQuality = 'high';
     g.drawImage(fromPixels(rgba), 0, 0, sharp.width, sharp.height);
+    const calm = calmUnblur(base, sharp);
     pushHistory();
-    P.base = sharp;
+    P.base = calm;
     P.adjust.k = 0;  // the Soften slider goes back to none
     syncUI();
     await rebuild();
@@ -486,10 +565,10 @@ async function aiUnblur() {
     toast('Photo unblurred. Hold "compare" to see the difference, or Cmd+Z to undo.', 3600);
   } catch (err) {
     console.error(err);
-    busy(false);
     toast('AI Unblur could not finish. The first time needs internet. Try again.', 4000);
   } finally {
-    busy(false);
+    letSleep();
+    aiBusy(null);
     btn.disabled = false;
   }
 }
