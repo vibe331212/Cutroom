@@ -2,7 +2,7 @@
 import { THEMES, Scene, findTheme, renderPreview } from './themes.js?v=4';
 import { initPhoto, Photo, FILTERS, applyFilter, findFaces, keepAwake } from './photo.js?v=19';
 import { VOICES, PITCHES, makeVoice, voiceName } from './voices.js?v=5';
-import { BACKGROUNDS, FRAMES, drawBackground, frameOf, frameArea, drawFrame, lookPicture } from './looks.js?v=1';
+import { BACKGROUNDS, FRAMES, FRAME_GROUPS, drawBackground, frameArea, frameRadius, drawFrame, lookPicture } from './looks.js?v=2';
 import { initAccount, settingsChanged, syncSaveButton } from './account.js?v=2';
 import { TextLayer, newText } from './text.js?v=1';
 import { SOUNDS, SOUND_GROUPS, VOICE_TYPES, soundOf, renderSound, addCustomSound, removeCustomSound, addOnlineSound } from './sfx.js?v=8';
@@ -667,7 +667,7 @@ function draw(dt) {
     const ar = src.w / src.h;
     let w = area.w, h = w / ar;
     if (h > area.h) { h = area.h; w = h * ar; }
-    const x = area.x + (area.w - w) / 2, y = area.y + (area.h - h) / 2, r = framed && S.look.frame === 'none' ? 26 : 0;
+    const x = area.x + (area.w - w) / 2, y = area.y + (area.h - h) / 2, r = S.look.frame === 'none' ? (framed ? 26 : 0) : frameRadius(S.look.frame, area.u);
     if (framed) {
       cx.save();
       cx.shadowColor = 'rgba(0,0,0,0.42)'; cx.shadowBlur = 60; cx.shadowOffsetY = 22;
@@ -3137,11 +3137,11 @@ function syncLookPanel() {
   $$('#frame-grid .look-card').forEach(c => c.classList.toggle('active', c.dataset.id === S.look.frame));
 }
 function buildLookPanel() {
-  const card = (kind, item) => `<button class="look-card" data-kind="${kind}" data-id="${item.id}"><canvas width="240" height="135"></canvas><span>${esc(item.name)}</span></button>`;
+  const card = (kind, item) => `<button class="look-card" data-kind="${kind}" data-id="${item.id}"><canvas width="400" height="225"></canvas><span>${esc(item.name)}</span></button>`;
   $('#bg-grid').innerHTML = BACKGROUNDS.map(b => card('bg', b)).join('');
-  $('#frame-grid').innerHTML = FRAMES.map(f => card('frame', f)).join('');
+  $('#frame-grid').innerHTML = card('frame', FRAMES[0]) + FRAME_GROUPS.map(g => `<div class="look-group">${g}</div>${FRAMES.filter(f => f.group === g).map(f => card('frame', f)).join('')}`).join('');
   $$('#bg-grid .look-card').forEach(c => lookPicture(c.firstElementChild, { bg: c.dataset.id }));
-  $$('#frame-grid .look-card').forEach(c => lookPicture(c.firstElementChild, { bg: 'none', frame: c.dataset.id }));
+  $$('#frame-grid .look-card').forEach(c => lookPicture(c.firstElementChild, { bg: 'gray', frame: c.dataset.id }));
   for (const grid of ['#bg-grid', '#frame-grid']) $(grid).addEventListener('click', e => {
     const c = e.target.closest('.look-card');
     if (c) setLook(c.dataset.kind, c.dataset.id);

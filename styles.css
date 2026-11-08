@@ -713,6 +713,7 @@ body.dragging-sound, body.dragging-sound * { cursor: grabbing !important; user-s
 .look-card { display: flex; flex-direction: column; gap: 4px; padding: 4px 4px 6px; border-radius: 12px; border: 2px solid transparent; background: var(--surface-2); cursor: pointer; }
 .look-card:hover { background: var(--surface-3); }
 .look-card.active { border-color: var(--accent); }
+.look-group { grid-column: 1 / -1; margin-top: 8px; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
 .look-card canvas { width: 100%; height: auto; display: block; border-radius: 8px; }
 .look-card span { font-size: 11.5px; font-weight: 600; text-align: center; color: var(--text); }
 
