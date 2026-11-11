@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Anton&family=Bangers&family=Bebas+Neue&family=Caveat:wght@700&family=Lobster&family=Pacifico&family=Permanent+Marker&family=Playfair+Display:wght@800&family=Press+Start+2P&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=35">
+<link rel="stylesheet" href="styles.css?v=36">
 </head>
 <body data-tone="light">
 <canvas id="scene" class="scene-bg"></canvas>
@@ -221,6 +221,8 @@
       <div class="h">High and low voice</div>
       <div class="sub">Make your voice higher or lower. It changes your whole clip. To change only part of it, hold <kbd>Return</kbd> and drag across that part on the timeline first.</div>
       <div class="fx-target" id="pitch-target"></div>
+      <div class="sound-check-row"><button class="secondary-btn" id="sound-check"><svg class="i"><use href="#i-wave"/></svg>Sound check</button><span>Can't hear anything? Press this.</span></div>
+      <div class="pe-help" id="sound-check-result" hidden></div>
       <div class="voice-grid" id="pitch-grid"></div>
       <div class="h fx-h2">Voice changer</div>
       <div class="sub">Change how you sound. It goes on the same part as above, and plays a few seconds so you can hear it.</div>
@@ -600,6 +602,6 @@
 <div class="toast" id="toast"></div>
 <div class="media-pool" id="media-pool"></div>
 
-<script type="module" src="js/app.js?v=48"></script>
+<script type="module" src="js/app.js?v=50"></script>
 </body>
 </html>

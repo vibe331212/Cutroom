@@ -83,10 +83,18 @@ ticker.onmessage = () => {
 };
 
 // ---------- audio graph: every clip plays through here so exports can capture the sound
-let actx = null, master = null, exportDest = null;
+let actx = null, master = null, exportDest = null, resumeFails = 0;
 function ensureAudio() {
   // Safari can also leave it "interrupted" after a recording or another app used the sound
-  if (actx) { if (actx.state !== 'running') actx.resume().catch(() => {}); return; }
+  if (actx) {
+    if (actx.state !== 'running' && actx.state !== 'closed') {
+      const ctx = actx;
+      ctx.resume().catch(() => {});
+      // remember when waking it up did not work, so the next click can start a fresh one
+      setTimeout(() => { if (ctx === actx && ctx.state !== 'running') resumeFails++; }, 400);
+    }
+    return;
+  }
   actx = new AudioContext();
   master = actx.createGain();
   exportDest = actx.createMediaStreamDestination();
@@ -106,7 +114,7 @@ function wireSource(src) {
 }
 function setSourceVoice(src, id) {
   if (!src.voiceIn || src.voiceId === id) return;
-  src.voiceIn.disconnect();
+  if (src.voiceId) src.voiceIn.disconnect();
   src.voiceChain?.stop();
   src.voiceChain = null;
   if (id === 'normal') src.voiceIn.connect(master);
@@ -124,8 +132,37 @@ function syncVoice() {
   const src = L && S.sources.get(L.seg.src);
   if (src) setSourceVoice(src, L.seg.voice || 'normal');
 }
-addEventListener('pointerdown', ensureAudio, { capture: true });
-addEventListener('keydown', ensureAudio, { capture: true });
+// Safari only lets some actions start sound (a click or a key, not always a press), so try them all.
+for (const ev of ['pointerdown', 'mousedown', 'touchend', 'keydown']) addEventListener(ev, ensureAudio, { capture: true });
+// If the sound system is still not running by the time the click finishes, it is stuck:
+// start a fresh one while we still have your click.
+addEventListener('click', () => {
+  if (actx && resumeFails > 0 && actx.state !== 'running') rebuildAudio('stuck');
+}, { capture: true });
+
+// A clip's player can only ever belong to one sound system, so a fresh sound system needs fresh players.
+let audioRebuilds = 0;
+function rebuildAudio(why) {
+  if (audioRebuilds > 3) return;
+  audioRebuilds++;
+  console.warn('Starting a fresh sound system:', why, actx?.state);
+  const old = actx;
+  actx = null; master = null; exportDest = null;
+  for (const src of S.sources.values()) {
+    const time = src.el.currentTime, wasPlaying = !src.el.paused;
+    src.el.pause();
+    src.el.remove();
+    src.voiceChain?.stop();
+    src.el = makeMediaEl(src.el.tagName.toLowerCase(), src.url);
+    src.el.addEventListener('loadedmetadata', () => { src.el.currentTime = time; if (wasPlaying && S.playing) src.el.play().catch(() => {}); }, { once: true });
+    src.node = null; src.voiceIn = null; src.voiceChain = null; src.voiceId = null;
+  }
+  try { old?.close(); } catch {}
+  resumeFails = 0;
+  ensureAudio();
+  actx.resume().catch(() => {});
+  activeSeg = null;
+}
 
 // ---------- modes (the 15 PetPost themes)
 const scene = new Scene($('#scene'));
@@ -2483,6 +2520,60 @@ function pickVoice(id) {
   toast(words, 1800);
   checkVoiceSound();
 }
+// Sound check: plays a beep, then listens to your clip, and says in plain words what it found.
+async function soundCheck() {
+  const box = $('#sound-check-result');
+  box.hidden = false;
+  box.textContent = 'Checking...';
+  ensureAudio();
+  const lines = [];
+  const first = actx.state;
+  // stuck: start a fresh one right away, while this still counts as your click
+  if (first !== 'running' && resumeFails > 0) { rebuildAudio('sound check'); lines.push(`Sound system was stuck (${first}), so a fresh one was started.`); }
+  await Promise.race([actx.resume().catch(() => {}), sleep(600)]);
+  const state = actx.state;
+  lines.push(`Sound system: ${state === 'running' ? 'on' : `not running (${state})`}, ${actx.sampleRate} Hz.`);
+  if (state !== 'running') {
+    rebuildAudio('sound check');
+    await Promise.race([actx.resume().catch(() => {}), sleep(600)]);
+    lines.push(`Started a fresh one: ${actx.state === 'running' ? 'now on' : `still ${actx.state}`}.`);
+  }
+  // a short beep through the same path your video uses
+  const o = actx.createOscillator(), g = actx.createGain();
+  o.frequency.value = 660;
+  g.gain.setValueAtTime(0.0001, actx.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.25, actx.currentTime + 0.03);
+  g.gain.exponentialRampToValueAtTime(0.0001, actx.currentTime + 0.5);
+  o.connect(g).connect(master);
+  o.start();
+  o.stop(actx.currentTime + 0.55);
+  lines.push('You should hear a beep now.');
+  box.textContent = lines.join(' ');
+  await sleep(700);
+  const L = S.segments.length ? locate(S.playhead) : null;
+  const src = L && S.sources.get(L.seg.src);
+  if (!src) { lines.push('Add a clip to check its sound too.'); box.textContent = lines.join(' '); return; }
+  const an = actx.createAnalyser();
+  an.fftSize = 2048;
+  master.connect(an);
+  const wave = new Float32Array(an.fftSize);
+  let loudest = 0;
+  const wasPlaying = S.playing;
+  if (!wasPlaying) play();
+  for (let i = 0; i < 12; i++) {
+    await sleep(120);
+    an.getFloatTimeDomainData(wave);
+    for (const v of wave) loudest = Math.max(loudest, Math.abs(v));
+  }
+  if (!wasPlaying) pause();
+  master.disconnect(an);
+  const voice = L.seg.voice ? ` with the ${voiceName(L.seg.voice)} voice` : '';
+  lines.push(src.el.paused && S.playing ? 'Your clip would not play.'
+    : loudest > 0.004 ? `Your clip's sound is reaching the speakers${voice}.`
+    : `Your clip is playing but no sound is coming out of it${voice}. Was the mic on when you recorded it?`);
+  box.textContent = lines.join(' ');
+}
+
 // If nothing can be heard, say why instead of leaving you guessing.
 function checkVoiceSound() {
   const an = actx.createAnalyser();
@@ -2558,6 +2649,7 @@ function buildFxPanel() {
   $('#voice-grid').addEventListener('click', e => { const c = e.target.closest('.voice-card'); if (c) pickVoice(c.dataset.voice); });
   $('#pitch-grid').innerHTML = [{ id: 'normal', name: 'Normal', desc: 'Your real voice' }, ...PITCHES].map(v => `
     <button class="voice-card" data-voice="${v.id}"><b>${esc(v.name)}</b><span>${esc(v.desc)}</span></button>`).join('');
+  $('#sound-check').onclick = soundCheck;
   $('#pitch-grid').addEventListener('click', e => { const c = e.target.closest('.voice-card'); if (c) pickVoice(c.dataset.voice); });
   $('#vfx-grid').innerHTML = FILTERS.map(f => `
     <button class="filter-card" data-filter="${f.id}">

@@ -717,6 +717,9 @@ body.dragging-sound, body.dragging-sound * { cursor: grabbing !important; user-s
 .look-card canvas { width: 100%; height: auto; display: block; border-radius: 8px; }
 .look-card span { font-size: 11.5px; font-weight: 600; text-align: center; color: var(--text); }
 
+.sound-check-row { display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--muted); }
+#sound-check-result { padding: 9px 11px; border-radius: 10px; background: var(--surface-2); color: var(--text); line-height: 1.5; }
+
 /* photo export */
 .pe-preview { border-radius: 14px; overflow: hidden; background: repeating-conic-gradient(rgba(127,127,127,.18) 0 25%, transparent 0 50%) 0 0 / 16px 16px; display: grid; place-items: center; max-height: 220px; }
 .pe-preview img { max-width: 100%; max-height: 220px; display: block; }
