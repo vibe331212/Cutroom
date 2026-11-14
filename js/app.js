@@ -178,7 +178,7 @@ addEventListener('click', () => {
 // A clip's player can only ever belong to one sound system, so a fresh sound system needs fresh players.
 let audioRebuilds = 0;
 function rebuildAudio(why) {
-  if (audioRebuilds > 3) return;
+  if (audioRebuilds > 40) return;
   audioRebuilds++;
   console.warn('Starting a fresh sound system:', why, actx?.state);
   stopClipAudio();
@@ -1845,12 +1845,15 @@ async function beginRecording() {
   }
   ensureAudio();
 
-  // mix the mic and any shared screen sound into one track
-  let audioTrack = null;
+  // mix the mic and any shared screen sound into one track. This uses a sound system of its own:
+  // in Safari, using the mic through the one you listen with can leave it silent afterwards.
+  let audioTrack = null, mixCtx = null;
   const audioIns = [mic, display].filter(s => s && s.getAudioTracks().length);
   if (audioIns.length) {
-    const dest = actx.createMediaStreamDestination();
-    audioIns.forEach(s => actx.createMediaStreamSource(new MediaStream(s.getAudioTracks())).connect(dest));
+    mixCtx = new (window.AudioContext || window.webkitAudioContext)();
+    mixCtx.resume().catch(() => {});
+    const dest = mixCtx.createMediaStreamDestination();
+    audioIns.forEach(s => mixCtx.createMediaStreamSource(new MediaStream(s.getAudioTracks())).connect(dest));
     audioTrack = dest.stream.getAudioTracks()[0];
   }
   let videoTrack = null, compositor = null;
@@ -1866,7 +1869,7 @@ async function beginRecording() {
   catch { stopAll(); compositor?.stop(); toast('This browser cannot record this kind of video'); return; }
 
   const insertAt = REC.where === 'playhead' && S.segments.length ? S.playhead : null;
-  rec = { recorder, mode, display, cam, mic, compositor, chunks: [], words: [], startedAt: 0, pausedAcc: 0, pausedAt: 0, stopping: false, sr: null, hasMic: !!mic, stopAll, insertAt };
+  rec = { recorder, mode, display, cam, mic, compositor, chunks: [], words: [], startedAt: 0, pausedAcc: 0, pausedAt: 0, stopping: false, sr: null, hasMic: !!mic, stopAll, insertAt, mixCtx };
   recorder.ondataavailable = e => { if (e.data.size) rec?.chunks.push(e.data); };
   recorder.onstop = finishRecording;
   if (cam) showCamBubble(cam, mode === 'screenface');  // see yourself while you record (Camera and Screen + face)
@@ -1978,6 +1981,9 @@ async function finishRecording() {
   hideCamBubble();
   r.stopAll();
   r.compositor?.stop();
+  r.mixCtx?.close().catch(() => {});
+  // the mic has been used, so start the sound you listen with fresh (Safari can leave it silent)
+  rebuildAudio('after recording');
   const type = (r.recorder.mimeType || 'video/webm').split(';')[0];
   const blob = new Blob(r.chunks, { type });
   if (!blob.size) { toast('Recording was empty'); return; }
@@ -2574,9 +2580,9 @@ async function soundCheck() {
   box.textContent = 'Checking...';
   ensureAudio();
   const lines = [];
-  const first = actx.state;
-  // stuck: start a fresh one right away, while this still counts as your click
-  if (first !== 'running' && resumeFails > 0) { rebuildAudio('sound check'); lines.push(`Sound system was stuck (${first}), so a fresh one was started.`); }
+  // always start fresh, while this still counts as your click: Safari can say its sound is on but stay silent
+  rebuildAudio('sound check');
+  lines.push('Sound restarted.');
   await Promise.race([actx.resume().catch(() => {}), sleep(600)]);
   const state = actx.state;
   lines.push(`Sound system: ${state === 'running' ? 'on' : `not running (${state})`}, ${actx.sampleRate} Hz.`);
