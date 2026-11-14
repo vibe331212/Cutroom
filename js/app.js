@@ -102,15 +102,50 @@ function ensureAudio() {
   master.connect(exportDest);
   for (const src of S.sources.values()) wireSource(src);
 }
+// Every clip's sound goes through its own voice slot, so a piece can sound like a robot (or anything else).
+// The sound is played from the clip's decoded sound, not from the video player: Safari can let a video
+// player's sound skip around the voice changer. The video player only shows the picture.
+// Only a clip whose sound cannot be decoded uses the video player's sound instead.
 function wireSource(src) {
-  if (!actx || src.node) return;
-  src.node = actx.createMediaElementSource(src.el);
-  // every clip goes through its own voice slot, so a piece can sound like a robot (or anything else)
-  src.voiceIn = actx.createGain();
-  src.node.connect(src.voiceIn);
-  src.voiceIn.connect(master);
-  src.voiceId = 'normal';
-  src.voiceChain = null;
+  if (!actx) return;
+  if (!src.voiceIn) {
+    src.voiceIn = actx.createGain();
+    src.voiceIn.connect(master);
+    src.voiceId = 'normal';
+    src.voiceChain = null;
+  }
+  if (src.useElementSound && !src.node) {
+    src.node = actx.createMediaElementSource(src.el);
+    src.node.connect(src.voiceIn);
+  }
+}
+let clipPlayer = null;  // { src, seg, node, from, t0 }
+function stopClipAudio() {
+  const p = clipPlayer;
+  clipPlayer = null;
+  if (!p) return;
+  try {
+    p.fade.gain.setTargetAtTime(0, actx.currentTime, 0.008);
+    p.node.stop(actx.currentTime + 0.04);
+  } catch {}
+}
+// keeps the decoded sound playing in step with the picture
+function syncClipAudio() {
+  if (!actx) return;
+  const L = S.playing && S.segments.length ? locate(S.playhead) : null;
+  const src = L && S.sources.get(L.seg.src);
+  const want = src && src.audio && !src.useElementSound && src.voiceIn && actx.state === 'running' ? { src, seg: L.seg, t: L.srcT } : null;
+  const p = clipPlayer;
+  if (p && (!want || p.seg !== want.seg.id || p.src !== want.src || Math.abs(p.from + (actx.currentTime - p.t0) - want.t) > 0.25)) stopClipAudio();
+  if (!want || clipPlayer || src.el.seeking) return;
+  const node = actx.createBufferSource(), fade = actx.createGain();
+  node.buffer = src.audio;
+  fade.gain.setValueAtTime(0, actx.currentTime);
+  fade.gain.setTargetAtTime(1, actx.currentTime, 0.006);
+  node.connect(fade).connect(src.voiceIn);
+  const from = Math.max(0, Math.min(want.t, src.audio.duration - 0.01));
+  node.start(actx.currentTime, from, Math.max(0.01, want.seg.end - from));
+  clipPlayer = { src, seg: want.seg.id, node, fade, from, t0: actx.currentTime };
 }
 function setSourceVoice(src, id) {
   if (!src.voiceIn || src.voiceId === id) return;
@@ -146,9 +181,13 @@ function rebuildAudio(why) {
   if (audioRebuilds > 3) return;
   audioRebuilds++;
   console.warn('Starting a fresh sound system:', why, actx?.state);
+  stopClipAudio();
   const old = actx;
   actx = null; master = null; exportDest = null;
   for (const src of S.sources.values()) {
+    src.voiceChain?.stop();
+    src.voiceIn = null; src.voiceChain = null; src.voiceId = null;
+    if (!src.node) continue;
     const time = src.el.currentTime, wasPlaying = !src.el.paused;
     src.el.pause();
     src.el.remove();
@@ -322,6 +361,7 @@ async function addSource(file, opts = {}) {
     key: opts.key || null,  // its file name when saved online
   };
   S.sources.set(src.id, src);
+  el.muted = true;  // its sound is played from the decoded sound once that is ready (see wireSource)
   wireSource(src);
   regroup(src);
   if (opts.noAppend) { /* opening a saved project puts the clips back itself */ }
@@ -347,7 +387,13 @@ async function analyze(src) {
     const buf = await src.file.arrayBuffer();
     src.audio = await new OfflineAudioContext(1, 1, 44100).decodeAudioData(buf);
     src.peaks = computePeaks(src.audio);
-  } catch { src.peaks = null; }
+  } catch {
+    src.peaks = null;
+    // this browser cannot decode the sound by itself, so let the video player make it
+    src.useElementSound = true;
+    src.el.muted = false;
+    wireSource(src);
+  }
   tlDirty = true;
   if (src.kind === 'video') await makeFilmstrip(src);
   else renderLibrary();
@@ -589,6 +635,7 @@ function play() {
 }
 function pause() {
   S.playing = false;
+  stopClipAudio();
   for (const s of S.sources.values()) s.el.pause();
   stopSfx();
   updatePlayButton();
@@ -3417,6 +3464,7 @@ function frame(now) {
   }
   syncFxPanel();
   syncVoice();
+  syncClipAudio();
   if (tlDirty) { tlDirty = false; drawTimeline(); }
 }
 function loop(now) {
