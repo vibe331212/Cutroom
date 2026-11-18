@@ -23,6 +23,7 @@ Or in a terminal, from this folder: `python3 server.py`, then open http://localh
 - Voice changer (Effects tab): Robot and 10 more voices on any part of a video.
 - Record more (timeline toolbar): add a new recording at the end or at the playhead.
 - Export to a 1080p WebM video or audio only, and captions as .srt.
+- Flick connection (`js/flick.js`): the Flick app opens Cutroom inside itself with a photo or video already loaded. The Export buttons turn into Send to Flick, and the finished edit goes back to Flick to post instead of downloading. Only Flick on this computer (localhost) can do this; add Flick's online address to `ONLINE_FLICK` in `js/flick.js` when it goes online.
 
 ## Online
 Live at **https://cutroom-app.pages.dev** (Cloudflare Pages project `cutroom-app`).

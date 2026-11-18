@@ -1,12 +1,13 @@
 // Cutroom: a browser video editor. Plain JavaScript modules, no build step.
 import { THEMES, Scene, findTheme, renderPreview } from './themes.js?v=4';
-import { initPhoto, Photo, FILTERS, applyFilter, findFaces, keepAwake } from './photo.js?v=19';
+import { initPhoto, Photo, FILTERS, applyFilter, findFaces, keepAwake } from './photo.js?v=22';
 import { VOICES, PITCHES, makeVoice, voiceName } from './voices.js?v=5';
 import { BACKGROUNDS, FRAMES, FRAME_GROUPS, drawBackground, frameArea, frameRadius, drawFrame, lookPicture } from './looks.js?v=2';
 import { initAccount, settingsChanged, syncSaveButton } from './account.js?v=2';
 import { TextLayer, newText } from './text.js?v=1';
 import { SOUNDS, SOUND_GROUPS, VOICE_TYPES, soundOf, renderSound, addCustomSound, removeCustomSound, addOnlineSound } from './sfx.js?v=8';
 import { listMySounds, saveMySound, deleteMySound } from './mysounds.js?v=1';
+import { Flick } from './flick.js?v=3';
 
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -2073,7 +2074,9 @@ async function runExport() {
   if (ex.cancelled) { toast('Export cancelled'); return; }
   const type = (recorder.mimeType || mime || 'video/webm').split(';')[0];
   const ext = type.includes('mp4') ? (exportKind === 'audio' ? 'm4a' : 'mp4') : 'webm';
-  download(new Blob(chunks, { type }), `${fileBase()}.${ext}`);
+  const out = new Blob(chunks, { type });
+  if (Flick.deliver(out, `${fileBase()}.${ext}`)) return; // opened from Flick: the edit goes back there
+  download(out, `${fileBase()}.${ext}`);
   toast('Export finished and downloaded');
 }
 function updateExportProgress() {
@@ -3482,6 +3485,7 @@ function loop(now) {
 // ---------- start
 loadSettings();
 initPhoto({ toast, openModal, closeModal });
+Flick.start({ open: file => importFiles([file]), toast });
 setupText();
 setupCamBubble();
 buildSoundsPanel();

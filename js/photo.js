@@ -1,5 +1,6 @@
 // Photo editor: drop in or take a photo, pick a filter, and scribble blur over anything.
 import { TextLayer, newText } from './text.js?v=1';
+import { Flick } from './flick.js?v=3';
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -835,6 +836,7 @@ async function exportPhoto() {
   if (!blob) { toast('This browser cannot save that file type. Try PNG or JPG.'); return; }
   const ext = PE.format === 'jpeg' ? 'jpg' : PE.format;
   const name = ($('#pe-name').value.trim() || `${P.name} edited`).replace(/[\\/:*?"<>|]+/g, '-');
+  if (Flick.deliver(blob, `${name}.${ext}`)) { closeModal('photo-export-modal'); return; } // opened from Flick
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = `${name}.${ext}`;
